@@ -1,0 +1,69 @@
+name: Build UAE world data
+
+# Builds the full-UAE tiles from OpenStreetMap and publishes them as a
+# release asset (world-data.tar.gz) that the APK build downloads.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'tools/uae_tiles.py'
+      - 'tools/build_world.sh'
+      - '.github/workflows/world.yml'
+  schedule:
+    - cron: '17 3 * * 1' # weekly refresh (Mondays)
+
+permissions:
+  contents: write
+
+concurrency:
+  group: world-data
+  cancel-in-progress: false
+
+jobs:
+  world:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install osmium + Python deps
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q osmium-tool
+          python3 -m pip install --quiet osmium shapely
+
+      - name: Tile pipeline self-test (synthetic data)
+        run: |
+          python3 tools/tests/make_test_osm.py /tmp/test.osm
+          python3 tools/uae_tiles.py /tmp/test.osm /tmp/world-test | tail -5
+
+      - name: Build world from OpenStreetMap
+        env:
+          WORK: ${{ runner.temp }}
+        run: |
+          tools/build_world.sh world
+          ls world | head
+          ls world/tiles | wc -l
+          python3 - <<'PY'
+          import json
+          ov = json.load(open('world/overview.json'))
+          t = ov['tiles']
+          print('tiles', len(t), 'roads', sum(x[2] for x in t), 'buildings', sum(x[3] for x in t), 'MB', round(sum(x[4] for x in t) / 1e6, 1))
+          print('places', len(ov['places']), 'emirates', [e['name'] for e in ov['emirates']])
+          PY
+
+      - name: Package
+        run: |
+          tar -czf world-data.tar.gz world
+          ls -la world-data.tar.gz
+
+      - name: Publish world data release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: world-data
+          name: UAE world data (OpenStreetMap)
+          prerelease: true
+          files: world-data.tar.gz
+          body: |
+            Full-UAE road, building, land-use and sea tiles for UAE Drive, generated from
+            OpenStreetMap (© OpenStreetMap contributors, ODbL 1.0). Rebuilt weekly.
