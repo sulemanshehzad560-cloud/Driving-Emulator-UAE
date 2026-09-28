@@ -1,6 +1,7 @@
 // Sky, sun, time of day, UAE seasons / weather and graphics quality presets.
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
+import { physicsCore } from '../sim/physicsCore.js';
 
 export const QUALITY = {
   low: { name: 'Low', shadows: false, shadowMap: 0, maxBuildings: 2500, maxPalms: 600, maxLamps: 300, traffic: 8, far: 650, bloom: false, mirrorEvery: 3, mirrorScale: 0.5 },
@@ -164,8 +165,13 @@ export class Environment {
     this.particleKind = kind;
     if (!kind) return;
     const n = kind === 'rain' ? 5000 : 3000;
-    const pos = new Float32Array(n * 3 * (kind === 'rain' ? 2 : 1));
-    this.particleData = new Float32Array(n * 3);
+    const stride = kind === 'rain' ? 6 : 3;
+    const core = physicsCore();
+    this.particleCore = core && core.particles.max >= n ? core : null;
+    // with the Rust core the vertex buffer lives in WebAssembly memory
+    const pos = this.particleCore ? this.particleCore.particles.out.view.subarray(0, n * stride) : new Float32Array(n * stride);
+    this.particleData = this.particleCore ? this.particleCore.particles.local.view.subarray(0, n * 3) : new Float32Array(n * 3);
+    this.particleCount = n;
     for (let i = 0; i < n; i++) {
       this.particleData.set([(Math.random() - 0.5) * 120, Math.random() * 40, (Math.random() - 0.5) * 120], i * 3);
     }
@@ -186,6 +192,12 @@ export class Environment {
     this.sun.target.position.set(focus.x, 0, focus.z);
     this.stars.position.set(focus.x, 0, focus.z);
     if (!this.particles) return;
+    if (this.particleCore) {
+      const p = this.particleCore.particles;
+      this.particleCore.ex.particles_step(p.local.ptr, p.out.ptr, this.particleCount, dt, this.particleKind === 'rain' ? 0 : 1, focus.x, focus.z, wind);
+      this.particles.geometry.attributes.position.needsUpdate = true;
+      return;
+    }
     const d = this.particleData;
     const pos = this.particles.geometry.attributes.position.array;
     const n = d.length / 3;

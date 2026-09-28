@@ -29,6 +29,18 @@ jobs:
         working-directory: game
         run: npm ci
 
+      - name: Unit tests
+        run: node tools/tests/osm-convert.test.mjs
+
+      - name: Rust physics core (tests + WebAssembly build)
+        working-directory: physics
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo test --release
+          cargo build --release --target wasm32-unknown-unknown
+          cp target/wasm32-unknown-unknown/release/uaedrive_physics.wasm ../game/public/physics.wasm
+          ls -la ../game/public/physics.wasm
+
       - name: Restore UAE map packs
         id: maps-cache
         uses: actions/cache@v4

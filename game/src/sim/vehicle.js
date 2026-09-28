@@ -1,6 +1,7 @@
 // Arcade vehicle model with speed-sensitive steering, weight transfer feel,
 // handbrake drifts and an automatic gearbox for HUD/sound.
 import { styleDims } from '../cars/carFactory.js';
+import { physicsCore, OFF } from './physicsCore.js';
 
 const GEARS = [0, 0.18, 0.32, 0.48, 0.64, 0.8, 0.93, 1.05]; // fraction of top speed per gear upper bound
 
@@ -26,6 +27,67 @@ export class Vehicle {
     this.offroad = false;
     this.wheelSpin = 0;
     this.topSpeed = spec.topSpeed / 3.6;
+    this.core = physicsCore();
+    if (this.core) this.initCore();
+  }
+
+  /** Configure the Rust dynamics model from the car's catalogue stats. */
+  initCore() {
+    const s = this.spec;
+    const { view } = this.core.alloc(this.core.blockSize);
+    this.block = view;
+    this.blockPtr = view.byteOffset;
+    const m = s.mass || 1800;
+    const top = s.topSpeed / 3.6;
+    const fmax = ((m * 27.8) / s.accel) * 1.15;
+    const power = fmax * 17;
+    const roll = 0.012 * m * 9.81;
+    const tall = s.style === 'suv' || s.style === 'boxy' || s.style === 'van';
+    const low = s.style === 'super' || s.style === 'hyper' || s.style === 'gt';
+    view[OFF.P_MASS] = m;
+    view[OFF.P_A] = this.wheelbase * (low ? 0.54 : 0.47);
+    view[OFF.P_B] = this.wheelbase * (low ? 0.46 : 0.53);
+    view[OFF.P_H] = tall ? 0.72 : low ? 0.42 : 0.55;
+    view[OFF.P_MU] = 0.85 + s.grip * 0.25;
+    view[OFF.P_FMAX] = fmax;
+    view[OFF.P_POWER] = power;
+    view[OFF.P_ROLL] = roll;
+    view[OFF.P_CAIR] = Math.max(0.2, (power / top - roll) / (top * top));
+    view[OFF.P_BRAKE] = m * 9.5 * s.braking;
+    view[OFF.P_STEER_LO] = 0.62;
+    view[OFF.P_STEER_HI] = 0.05 + s.handling * 0.05;
+    view[OFF.P_STEER_RATE] = 2.2 + s.handling * 2;
+    view[OFF.P_TOP] = top;
+    view[OFF.P_AWD] = low || s.style === 'boxy' || s.style === 'suv' ? 1 : 0;
+  }
+
+  updateCore(dt, input) {
+    const b = this.block;
+    const h0 = this.heading;
+    // JS may have moved the car (collisions): push the current state in
+    b[OFF.S_X] = this.x;
+    b[OFF.S_Z] = this.z;
+    b[OFF.S_HEADING] = h0;
+    b[OFF.S_U] = -this.vx * Math.sin(h0) - this.vz * Math.cos(h0); // forward component
+    b[OFF.S_V] = -this.vx * Math.cos(h0) + this.vz * Math.sin(h0); // left component
+    b[OFF.I_THROTTLE] = input.throttle;
+    b[OFF.I_BRAKE] = input.brake;
+    b[OFF.I_STEER] = input.steer;
+    b[OFF.I_HANDBRAKE] = input.handbrake ? 1 : 0;
+    b[OFF.I_OFFROAD] = this.offroad ? 1 : 0;
+    this.core.ex.vehicle_step(this.blockPtr, dt);
+    this.x = b[OFF.S_X];
+    this.z = b[OFF.S_Z];
+    this.heading = b[OFF.S_HEADING];
+    const u = b[OFF.S_U], v = b[OFF.S_V];
+    const h = this.heading;
+    this.vx = -Math.sin(h) * u - Math.cos(h) * v;
+    this.vz = -Math.cos(h) * u + Math.sin(h) * v;
+    this.speed = u;
+    this.yawRate = b[OFF.S_R];
+    this.steer = -b[OFF.S_DELTA]; // positive = wheels turned right
+    this.slip = b[OFF.S_SLIP];
+    this.braking = b[OFF.S_BRAKING] > 0.5;
   }
 
   place(x, z, heading) {
@@ -44,6 +106,11 @@ export class Vehicle {
   }
 
   update(dt, input) {
+    if (this.core) {
+      this.updateCore(dt, input);
+      this.updateGearbox(dt, input, this.speed);
+      return;
+    }
     const s = this.spec;
     const [fx, fz] = this.forward;
     const rx = -fz, rz = fx;
@@ -88,7 +155,7 @@ export class Vehicle {
     const rate = 2.6 + s.handling * 2;
     this.steer += Math.max(-rate * dt, Math.min(rate * dt, target - this.steer));
     const grip = (this.offroad ? 0.6 : 1) * s.grip;
-    const yawTarget = (fwd * Math.tan(this.steer)) / this.wheelbase;
+    const yawTarget = -(fwd * Math.tan(this.steer)) / this.wheelbase; // heading decreases when turning right
     const yawResponse = input.handbrake ? 9 : 7 * grip;
     this.yawRate += (yawTarget * (input.handbrake ? 1.25 : 1) - this.yawRate) * Math.min(1, yawResponse * dt);
     this.heading += this.yawRate * dt;
@@ -106,7 +173,10 @@ export class Vehicle {
     this.x += this.vx * dt;
     this.z += this.vz * dt;
     this.speed = fwd;
+    this.updateGearbox(dt, input, fwd);
+  }
 
+  updateGearbox(dt, input, fwd) {
     // --- gearbox for HUD / audio ---
     const r = Math.abs(fwd) / this.topSpeed;
     if (fwd < -0.3) this.gear = -1;

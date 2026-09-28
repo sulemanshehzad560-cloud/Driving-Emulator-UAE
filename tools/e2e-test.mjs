@@ -124,11 +124,19 @@ try {
     if (s1.kmh < 10) throw new Error('car did not accelerate');
     await shot('09-driving-chase');
   });
-  await step('steer + brake', async () => {
+  await step('Rust/WebAssembly physics core active', async () => {
+    const core = await page.evaluate(() => !!window.__game.player.core);
+    if (!core) throw new Error('physics.wasm did not load – running on the JS fallback');
+  });
+  await step('steer right turns right, then brake', async () => {
+    const h0 = await page.evaluate(() => window.__game.player.heading);
     await page.keyboard.down('ArrowUp');
-    await page.keyboard.down('ArrowLeft');
+    await page.keyboard.down('ArrowRight');
     await simulate(0.8);
-    await page.keyboard.up('ArrowLeft');
+    await page.keyboard.up('ArrowRight');
+    const h1 = await page.evaluate(() => window.__game.player.heading);
+    console.log('    heading change steering right:', (h1 - h0).toFixed(3), 'rad');
+    if (!(h1 < h0 - 0.05)) throw new Error('steering right did not turn the car right');
     await page.keyboard.up('ArrowUp');
     await page.keyboard.down('ArrowDown');
     await simulate(3);

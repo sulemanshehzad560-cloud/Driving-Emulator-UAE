@@ -150,7 +150,8 @@ export function convertOsm(osm, meta) {
       if (t.highway === 'service' && t.service) continue; // skip driveways / parking aisles
       if (t.access === 'private' || t.access === 'no') continue;
       const def = ROAD_TYPES[t.highway];
-      // split the way into runs of nodes that fall inside the play radius
+      // split the way into runs of nodes inside the play radius; segments that
+      // cross the boundary are cut exactly at the edge so no road is lost
       let run = [];
       const flush = () => {
         if (run.length >= 2) {
@@ -173,9 +174,28 @@ export function convertOsm(osm, meta) {
         }
         run = [];
       };
-      for (const id of w.nodes) {
-        if (inside(osmNodes.get(id))) run.push(id);
-        else flush();
+      const edgeNode = (inId, outId) => {
+        const key = `edge:${inId}:${outId}`;
+        if (!osmNodes.has(key)) {
+          const p = osmNodes.get(inId), q = osmNodes.get(outId);
+          // solve |p + (q-p)t| = R for t in [0,1]
+          const dx = q[0] - p[0], dy = q[1] - p[1];
+          const A = dx * dx + dy * dy, B = 2 * (p[0] * dx + p[1] * dy), C = p[0] * p[0] + p[1] * p[1] - r2;
+          const tt = A ? Math.min(1, Math.max(0, (-B + Math.sqrt(Math.max(0, B * B - 4 * A * C))) / (2 * A))) : 0;
+          osmNodes.set(key, [round(p[0] + dx * tt), round(p[1] + dy * tt)]);
+        }
+        return key;
+      };
+      const ids = w.nodes.filter((nid) => osmNodes.has(nid));
+      for (let k = 0; k < ids.length; k++) {
+        const nid = ids[k];
+        if (inside(osmNodes.get(nid))) {
+          if (!run.length && k > 0) run.push(edgeNode(nid, ids[k - 1]));
+          run.push(nid);
+        } else if (run.length) {
+          run.push(edgeNode(ids[k - 1], nid));
+          flush();
+        }
       }
       flush();
     } else if (t.building) {

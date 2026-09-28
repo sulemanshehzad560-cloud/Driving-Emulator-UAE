@@ -10,6 +10,7 @@ import { Garage } from './ui/garage.js';
 import { Game } from './game.js';
 import { CarAudio, Radio } from './audio/audio.js';
 import { providers, signIn, signOut, hasNative, nativeCall } from './auth.js';
+import { loadPhysicsCore } from './sim/physicsCore.js';
 
 const canvas = document.getElementById('gl');
 const screens = document.getElementById('screens');
@@ -466,6 +467,8 @@ async function startDrive(loader, regionId) {
     </div>`);
   await new Promise((r) => setTimeout(r, 50));
   try {
+    progress('Starting physics engine…');
+    await loadPhysicsCore();
     const map = await loader();
     progress('Building roads, buildings and traffic…');
     await new Promise((r) => setTimeout(r, 30));
