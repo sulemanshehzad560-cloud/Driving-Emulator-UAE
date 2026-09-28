@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- stylised road vanishing to the horizon with a gold centre line -->
+    <path android:fillColor="#2B2F36" android:pathData="M30,86 L50,40 L58,40 L78,86z" />
+    <path android:fillColor="#F3D77A" android:pathData="M53,44 L55,44 L55.6,52 L52.4,52z M52,57 L56,57 L57,68 L51,68z M50.5,74 L57.5,74 L58.8,86 L49.2,86z" />
+    <!-- skyline -->
+    <path android:fillColor="#D4AF37" android:pathData="M53.4,18 L54.6,18 L55.5,40 L52.5,40z M40,30 h5 v10 h-5z M46,26 h4 v14 h-4z M59,28 h4 v12 h-4z M64,32 h5 v8 h-5z" />
+</vector>

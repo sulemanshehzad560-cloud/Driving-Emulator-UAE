@@ -1,0 +1,173 @@
+name: Build APK
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: game/package-lock.json
+
+      - name: Install game dependencies
+        working-directory: game
+        run: npm ci
+
+      - name: Restore UAE map packs
+        id: maps-cache
+        uses: actions/cache@v4
+        with:
+          path: game/public/maps
+          key: osm-maps-${{ hashFiles('game/src/world/regions.js', 'game/src/world/osm.js') }}
+
+      - name: Download UAE map packs from OpenStreetMap
+        if: steps.maps-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 30
+        run: node tools/fetch-uae-maps.mjs
+        continue-on-error: true
+
+      - name: Map pack summary
+        run: ls -la game/public/maps && cat game/public/maps/index.json
+
+      - name: Build game
+        working-directory: game
+        run: npm run build
+
+      - name: End-to-end test (headless Chromium)
+        run: |
+          npx --prefix game playwright --version || npm i --no-save --prefix game playwright
+          npx --prefix game playwright install --with-deps chromium
+          cp tools/e2e-test.mjs game/e2e-test.mjs
+          cd game
+          node e2e-test.mjs ../android/app/src/main/assets/www ../e2e-shots demo-city
+          if [ -f ../android/app/src/main/assets/www/maps/dubai-downtown.json ]; then
+            node e2e-test.mjs ../android/app/src/main/assets/www ../e2e-shots-dubai dubai-downtown
+          fi
+
+      - name: Upload test screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: |
+            e2e-shots
+            e2e-shots-dubai
+          if-no-files-found: ignore
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Decode signing key (optional)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "KEYSTOREFILE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build APK
+        working-directory: android
+        env:
+          PLAYGAMESAPPID: ${{ secrets.PLAY_GAMES_APP_ID }}
+          FACEBOOKAPPID: ${{ secrets.FACEBOOK_APP_ID }}
+          FACEBOOKCLIENTTOKEN: ${{ secrets.FACEBOOK_CLIENT_TOKEN }}
+          KEYSTOREPASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYALIAS: ${{ secrets.KEY_ALIAS }}
+          KEYPASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease -PversionCode=${{ github.run_number }} -PversionName=1.0.${{ github.run_number }}
+          mkdir -p ../dist
+          cp app/build/outputs/apk/release/app-release.apk ../dist/UAE-Drive-v1.0.${{ github.run_number }}.apk
+          ls -la ../dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UAE-Drive-apk
+          path: dist/*.apk
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: UAE Drive v1.0.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          files: dist/*.apk
+          body: |
+            Android APK built from `${{ github.ref_name }}` (${{ github.sha }}).
+
+            **Install:** download `UAE-Drive-v1.0.${{ github.run_number }}.apk` on your phone, open it and allow
+            "Install unknown apps" for your browser/file manager when Android asks.
+            Requires Android 7.0+ with OpenGL ES 3 (almost every phone from 2016 onwards).
+
+            Map data © OpenStreetMap contributors (ODbL).
+
+  emulator-test:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    continue-on-error: true
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: UAE-Drive-apk
+          path: dist
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install and launch on Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: google_apis
+          arch: x86_64
+          profile: pixel_5
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: |
+            adb install -r dist/*.apk
+            adb logcat -c
+            adb shell am start -n ae.uaedrive.game/.MainActivity
+            sleep 40
+            adb shell input tap 1000 500
+            sleep 5
+            adb exec-out screencap -p > emulator-splash.png
+            adb shell pidof ae.uaedrive.game && echo "APP RUNNING" || (echo "APP NOT RUNNING"; exit 1)
+            adb logcat -d > logcat.txt
+            if grep -E "FATAL EXCEPTION.*|AndroidRuntime: Process: ae.uaedrive.game" logcat.txt; then echo "CRASH DETECTED"; exit 1; fi
+            grep -iE "chromium.*(Uncaught|error)" logcat.txt | head -20 || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emulator-results
+          path: |
+            emulator-splash.png
+            logcat.txt
+          if-no-files-found: ignore
