@@ -2,12 +2,14 @@
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { physicsCore } from '../sim/physicsCore.js';
+import { Lensflare, LensflareElement } from 'three/examples/jsm/objects/Lensflare.js';
+import { glowTexture } from './textures.js';
 
 export const QUALITY = {
-  low: { name: 'Low', shadows: false, shadowMap: 0, maxBuildings: 2500, maxPalms: 600, maxLamps: 300, traffic: 8, far: 650, bloom: false, mirrorEvery: 3, mirrorScale: 0.5 },
-  medium: { name: 'Medium', shadows: true, shadowMap: 1024, maxBuildings: 5000, maxPalms: 1800, maxLamps: 800, traffic: 14, far: 1000, bloom: false, mirrorEvery: 2, mirrorScale: 0.75 },
-  high: { name: 'High', shadows: true, shadowMap: 2048, maxBuildings: 7000, maxPalms: 3500, maxLamps: 1500, traffic: 22, far: 1500, bloom: true, mirrorEvery: 1, mirrorScale: 1 },
-  ultra: { name: 'Ultra', shadows: true, shadowMap: 4096, maxBuildings: 9000, maxPalms: 5000, maxLamps: 2500, traffic: 30, far: 2200, bloom: true, mirrorEvery: 1, mirrorScale: 1.25 },
+  low: { name: 'Low', post: false, msaa: 0, ao: false, flare: false, shadows: false, shadowMap: 0, maxBuildings: 2500, maxPalms: 600, maxLamps: 300, traffic: 8, far: 650, bloom: false, mirrorEvery: 3, mirrorScale: 0.5 },
+  medium: { name: 'Medium', post: true, msaa: 2, ao: false, flare: false, shadows: true, shadowMap: 1024, maxBuildings: 5000, maxPalms: 1800, maxLamps: 800, traffic: 14, far: 1000, bloom: false, mirrorEvery: 2, mirrorScale: 0.75 },
+  high: { name: 'High', post: true, msaa: 4, ao: false, flare: true, shadows: true, shadowMap: 2048, maxBuildings: 7000, maxPalms: 3500, maxLamps: 1500, traffic: 22, far: 1500, bloom: true, mirrorEvery: 1, mirrorScale: 1 },
+  ultra: { name: 'Ultra', post: true, msaa: 4, ao: true, flare: true, shadows: true, shadowMap: 4096, maxBuildings: 9000, maxPalms: 5000, maxLamps: 2500, traffic: 30, far: 2200, bloom: true, mirrorEvery: 1, mirrorScale: 1.25 },
 };
 
 export const RESOLUTIONS = {
@@ -27,10 +29,10 @@ export const SEASONS = {
 };
 
 export const TIMES = {
-  dawn: { name: 'Dawn', hour: 6.2 },
+  dawn: { name: 'Dawn', hour: 6.4 },
   morning: { name: 'Morning', hour: 9 },
   noon: { name: 'Noon', hour: 12.5 },
-  sunset: { name: 'Sunset', hour: 18.1 },
+  sunset: { name: 'Sunset', hour: 17.5 },
   night: { name: 'Night', hour: 22 },
 };
 
@@ -69,6 +71,9 @@ export class Environment {
     this.sunDir = new THREE.Vector3();
     this.hemi = new THREE.HemisphereLight(0xdbe8ff, 0xc9a877, 0.6);
     scene.add(this.hemi);
+    // sodium-orange glow of a lit city at night (street lamps, billboards)
+    this.cityGlow = new THREE.AmbientLight(0xffb070, 0);
+    scene.add(this.cityGlow);
     this.sun = new THREE.DirectionalLight(0xffffff, 2.6);
     if (quality.shadows) {
       this.sun.castShadow = true;
@@ -89,6 +94,17 @@ export class Environment {
     scene.add(this.stars);
     this.particles = null;
     this.night = 0;
+    if (quality.flare) {
+      // cinematic sun flare with ghosts along the lens axis
+      const glow = glowTexture();
+      this.flare = new Lensflare();
+      this.flare.addElement(new LensflareElement(glow, 220, 0, new THREE.Color(1, 0.95, 0.8)));
+      this.flare.addElement(new LensflareElement(glow, 60, 0.4, new THREE.Color(1, 0.7, 0.4)));
+      this.flare.addElement(new LensflareElement(glow, 90, 0.65, new THREE.Color(0.6, 0.8, 1)));
+      this.flare.addElement(new LensflareElement(glow, 140, 0.9, new THREE.Color(1, 0.85, 0.6)));
+      this.flare.addElement(new LensflareElement(glow, 50, 1.1, new THREE.Color(0.7, 1, 0.8)));
+      scene.add(this.flare);
+    }
   }
 
   makeStars() {
@@ -137,6 +153,7 @@ export class Environment {
     this.hemi.intensity = 0.3 + dayI * 0.45;
     this.hemi.color.set(night > 0.5 ? 0x4a5f8c : 0xdbe8ff);
     this.stars.material.opacity = night;
+    this.cityGlow.intensity = night * 0.55;
 
     const fogCol = new THREE.Color(season.fog);
     if (low > 0) fogCol.lerp(new THREE.Color(0xf0a060), low * 0.45);
@@ -153,7 +170,8 @@ export class Environment {
     this.scene.environmentIntensity = 0.12 + dayI * 0.28;
 
     this.setParticles(season.particles);
-    return { night, wet: season.wet };
+    if (this.flare) this.flare.visible = night < 0.3 && elevation > 2 && !season.particles && season.fogDensity < 2;
+    return { night, wet: season.wet, sunset: low };
   }
 
   setParticles(kind) {
@@ -191,6 +209,7 @@ export class Environment {
     this.sun.position.set(focus.x + this.sunDir.x * 300, Math.max(20, this.sunDir.y * 300), focus.z + this.sunDir.z * 300);
     this.sun.target.position.set(focus.x, 0, focus.z);
     this.stars.position.set(focus.x, 0, focus.z);
+    if (this.flare) this.flare.position.set(focus.x + this.sunDir.x * 8000, this.sunDir.y * 8000, focus.z + this.sunDir.z * 8000);
     if (!this.particles) return;
     if (this.particleCore) {
       const p = this.particleCore.particles;

@@ -40,6 +40,21 @@ later with OpenGL ES 3, which covers nearly every phone made since 2016.
 | **Graphics** | Auto, Low, Medium, High and Ultra quality presets, and resolution choices of Auto, 540p, 720p, **1080p Full HD** and 1440p. Includes shadows, bloom, reflections, palm trees, streetlights and lit windows at night. |
 | **Accounts** | Google Play Games and Facebook sign-in (they need the app IDs below), and guest mode. Progress, money, cars, stats and settings are saved on the phone. |
 
+## Technology stack
+
+| Layer | What the game uses | What it does |
+| --- | --- | --- |
+| **Systems** (Rust) | `physics/`: a Rust crate compiled to WebAssembly | Vehicle dynamics: a bicycle model with Pacejka "magic formula" tyres, weight transfer, friction circle, AWD/RWD, brake bias, handbrake drifts and fixed 240 Hz sub-steps. It also moves the weather particles and writes them straight into the GPU vertex buffer. It has 9 unit tests (0–100 time, top speed, braking distance, steering direction, stability, drift, reverse, frame-rate independence). A JS fallback is kept. |
+| **Graphics API** | WebGL 2 / OpenGL ES 3 | On modern Android devices, the system WebView runs WebGL through Google's ANGLE layer, which usually uses **Vulkan**. Older devices use OpenGL ES. |
+| **GPU / shading** (GLSL) | `game/src/render/cinematic.js` plus the three.js PBR shaders | HDR half-float rendering with 4× MSAA, GTAO ambient occlusion (Ultra), bloom, ACES tone mapping, and a custom GLSL cinematic pass. That pass adds desert heat haze over the horizon, radial speed blur, chromatic aberration, filmic lift/gamma/gain grading per time of day and weather, vignette and film grain. There are also sun lens flares, wet-road reflections in rain, PBR clear-coat car paint and soft sun shadows that follow the car. |
+| **Tools / pipeline** | Node.js tools in `tools/` | OpenStreetMap → game-map converter, map-pack downloader, and end-to-end tests. |
+
+A native C++/Vulkan engine with Houdini (VEX) or Maya (Python) content tools
+would be a separate, much larger project. The practical route to that is
+Unreal Engine 5, which uses C++, Vulkan on Android, HLSL shaders and Python
+editor scripting. The road-network converter in this repo could feed such a
+project.
+
 ## Honest notes and limitations
 
 * **Google Maps / Waze data isn't used.** Their terms don't allow copying their

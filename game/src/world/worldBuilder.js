@@ -326,6 +326,7 @@ export class World {
     const matJunction = layerMaterial({ map: asphaltMap, color: 0x9a9a9a, roughness: 0.88 }, 3);
     const matWhite = layerMaterial({ color: 0xf2f2f2, roughness: 0.7, emissive: 0x222222 }, 4);
     const matYellow = layerMaterial({ color: 0xf2c200, roughness: 0.7, emissive: 0x221a00 }, 4);
+    this.roadMats = [matRoad, matJunction];
     const shadows = q.shadows;
     for (const m of sidewalk.meshes(matSidewalk, { receiveShadow: shadows })) this.group.add(m);
     for (const m of asphalt.meshes(matRoad, { receiveShadow: shadows })) this.group.add(m);
@@ -676,6 +677,15 @@ export class World {
       oct.rotateZ(Math.PI / 8);
       oct.translate(0, 2.6, 0.06);
       place(stops.slice(0, 300), new THREE.MeshStandardMaterial({ map: stopSignTexture(), roughness: 0.5, emissive: 0x220000 }), oct);
+    }
+  }
+
+  /** Rain makes the asphalt dark and glossy so it mirrors lights and sky. */
+  setWet(wet) {
+    for (const m of this.roadMats) {
+      m.roughness = wet ? 0.28 : 0.88;
+      m.metalness = wet ? 0.35 : 0.02;
+      m.color.set(wet ? 0x6e6e70 : 0x9a9a9a);
     }
   }
 

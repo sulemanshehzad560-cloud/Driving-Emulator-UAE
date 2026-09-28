@@ -1,10 +1,7 @@
 // A driving session: builds the world for a map, runs physics, AI traffic,
 // traffic-law enforcement, cameras (incl. live mirrors), HUD and missions.
 import * as THREE from 'three';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { CinematicPipeline, gradeFor } from './render/cinematic.js';
 import { RoadGraph } from './world/roadGraph.js';
 import { World } from './world/worldBuilder.js';
 import { Signals } from './world/signals.js';
@@ -77,7 +74,8 @@ export class Game {
     this.screenCanvas = document.createElement('canvas');
     this.screenCanvas.width = 256;
     this.screenCanvas.height = 150;
-    this.interior = buildInterior(this.spec.style, this.screenCanvas);
+    this.exterior = [...this.car.children];
+    this.interior = buildInterior(this.spec.style, this.screenCanvas, this.car.userData.paint);
     this.car.add(this.interior);
 
     this.setupMirrors();
@@ -195,16 +193,14 @@ export class Game {
   }
 
   setupPost() {
-    this.composer = null;
-    if (!this.q.bloom) return;
+    this.post = null;
+    if (!this.q.post) return;
     try {
-      this.composer = new EffectComposer(this.renderer);
-      this.composer.addPass(new RenderPass(this.scene, this.camera));
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.35, 0.5, 0.92);
-      this.composer.addPass(this.bloom);
-      this.composer.addPass(new OutputPass());
+      this.post = new CinematicPipeline(this.renderer, this.scene, this.camera, this.q);
+      this.bloom = this.post.bloom;
     } catch (e) {
-      this.composer = null;
+      console.warn('post-processing disabled', e);
+      this.post = null;
     }
   }
 
@@ -212,18 +208,20 @@ export class Game {
     const w = innerWidth, h = innerHeight;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
-    if (this.composer) {
-      this.composer.setPixelRatio(this.renderer.getPixelRatio());
-      this.composer.setSize(w, h);
-    }
+    if (this.post) this.post.setSize(w, h);
   }
 
   applyEnvironment() {
-    const { night, wet } = this.env.set(this.hour, this.settings.season);
+    const { night, wet, sunset } = this.env.set(this.hour, this.settings.season);
     this.night = night;
     this.wet = wet;
     this.world.setNight(night);
-    if (this.bloom) this.bloom.strength = 0.25 + night * 0.6;
+    this.world.setWet(wet);
+    if (this.post) this.post.setGrade(gradeFor({ night, sunsetAmount: sunset, season: this.settings.season }));
+    if (this.bloom) {
+      this.bloom.strength = 0.12 + night * 0.45;
+      this.bloom.threshold = night > 0.5 ? 0.9 : 2.5;
+    }
     const temps = OUTSIDE_TEMP[this.settings.season] || OUTSIDE_TEMP.summer;
     const dayF = Math.max(0, Math.sin(((this.hour - 6) / 12) * Math.PI));
     if (this.climate) this.climate.outside = Math.round(temps[1] + (temps[0] - temps[1]) * dayF);
@@ -696,13 +694,14 @@ export class Game {
     this.headlight.intensity = this.lights ? (this.lights === 2 ? 900 : 350) * (0.3 + this.night) : 0;
     this.headlight.distance = this.lights === 2 ? 140 : 70;
     this.headlight.angle = this.lights === 2 ? 0.6 : 0.5;
-    this.interior.visible = this.cameraMode === 'cockpit';
-    const paintSide = this.interior.visible ? THREE.DoubleSide : THREE.FrontSide;
-    if (this.car.userData.paint.side !== paintSide) {
-      this.car.userData.paint.side = paintSide;
-      this.car.userData.paint.needsUpdate = true;
-    }
+    this.setCockpit(this.cameraMode === 'cockpit');
     if (this.interior.visible) this.interior.userData.wheel.rotation.z = -p.steer * 5;
+  }
+
+  /** Cockpit view shows the modelled cabin instead of the exterior shell. */
+  setCockpit(on) {
+    this.interior.visible = on;
+    for (const o of this.exterior) o.visible = !on;
   }
 
   drawCarScreen() {
@@ -739,8 +738,8 @@ export class Game {
       const local = mode === 'cockpit' ? eye.clone() : new THREE.Vector3(0, eye.y + 0.05, -1.2);
       const world = local.applyMatrix4(this.car.matrixWorld);
       cam.position.set(world.x + sx, world.y + sy, world.z);
-      cam.fov = mode === 'cockpit' ? 68 : 60;
-      const look = new THREE.Vector3(0, local.y - 0.25, -30).applyMatrix4(this.car.matrixWorld);
+      cam.fov = mode === 'cockpit' ? 58 : 60;
+      const look = new THREE.Vector3(local.x, local.y - 1.1, local.z - 30).applyMatrix4(this.car.matrixWorld);
       cam.lookAt(look);
     } else if (mode === 'cinematic') {
       if (!this.cinematicSpot || Math.hypot(this.cinematicSpot.x - p.x, this.cinematicSpot.z - p.z) > 70) {
@@ -785,11 +784,12 @@ export class Game {
       const world = m.pos.clone().applyMatrix4(this.car.matrixWorld);
       m.cam.position.copy(world);
       m.cam.rotation.set(-0.04, this.player.heading + Math.PI + m.yaw, 0);
-      const intVis = this.interior.visible;
-      this.interior.visible = false;
+      // mirrors see the real car body, not the cockpit model
+      const cockpit = this.interior.visible;
+      if (cockpit) this.setCockpit(false);
       renderer.setRenderTarget(m.rt);
       renderer.render(this.scene, m.cam);
-      this.interior.visible = intVis;
+      if (cockpit) this.setCockpit(true);
     }
     renderer.setRenderTarget(null);
     return any;
@@ -797,8 +797,16 @@ export class Game {
 
   render() {
     const any = this.renderMirrors();
-    if (this.composer) this.composer.render();
-    else this.renderer.render(this.scene, this.camera);
+    if (this.post) {
+      const season = this.settings.season;
+      const hotDay = season === 'summer' && this.hour > 9.5 && this.hour < 17 ? 1 : season === 'sandstorm' ? 0.5 : 0;
+      this.post.update(this.time, {
+        speed: Math.max(0, Math.min(1, (this.player.kmh - 110) / 170)) * (this.cameraMode === 'cockpit' ? 0.5 : 1),
+        haze: hotDay,
+        cinematic: this.cameraMode === 'cinematic',
+      });
+      this.post.render();
+    } else this.renderer.render(this.scene, this.camera);
     if (any) {
       const ac = this.renderer.autoClear;
       this.renderer.autoClear = false;
@@ -824,7 +832,7 @@ export class Game {
     this.scene.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
     });
-    if (this.composer) this.composer.dispose?.();
+    if (this.post) this.post.dispose();
   }
 }
 

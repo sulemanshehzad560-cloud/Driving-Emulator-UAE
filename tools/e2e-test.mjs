@@ -13,6 +13,7 @@ import { chromium } from 'playwright';
 const buildDir = path.resolve(process.argv[2] || 'android/app/src/main/assets/www');
 const outDir = path.resolve(process.argv[3] || 'e2e-shots');
 const region = process.argv[4] || 'demo-city';
+const quality = process.argv[5] || 'low'; // graphics preset used while driving
 fs.mkdirSync(outDir, { recursive: true });
 
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png' };
@@ -99,8 +100,8 @@ try {
     });
     if (pr[1] !== 1080) throw new Error(`expected 1080 px tall drawing buffer, got ${pr}`);
     // back to a lighter setting so software rendering in CI stays fast
-    await page.selectOption('[data-set="resolution"]', '540p');
-    await page.selectOption('[data-set="quality"]', 'low');
+    await page.selectOption('[data-set="resolution"]', quality === 'low' ? '540p' : '720p');
+    await page.selectOption('[data-set="quality"]', quality);
   });
   await step(`load city ${region}`, async () => {
     await page.click('[data-tab="drive"]');
@@ -108,6 +109,9 @@ try {
     await page.waitForFunction(() => window.__game, null, { timeout: 180000 });
     await sleep(1500);
     await shot('08-drive-start');
+    const post = await page.evaluate(() => !!window.__game.post);
+    console.log(`    quality ${quality}, cinematic GLSL pipeline: ${post ? 'on' : 'off'}`);
+    if (quality !== 'low' && !post) throw new Error('post-processing pipeline failed to start');
   });
   const state = () => page.evaluate(() => {
     const g = window.__game;
@@ -167,6 +171,8 @@ try {
     await page.keyboard.down('ArrowUp');
     await simulate(1.5);
     await page.keyboard.up('ArrowUp');
+    // wait until a frame has been rendered in cockpit view (slow on software GPUs)
+    await page.waitForFunction(() => window.__game.mirrors.every((m) => m.mesh.visible), null, { timeout: 90000 }).catch(() => {});
     await sleep(1500);
     const visible = await page.evaluate(() => window.__game.mirrors.map((m) => m.mesh.visible));
     if (!visible.every(Boolean)) throw new Error(`mirrors not visible: ${visible}`);

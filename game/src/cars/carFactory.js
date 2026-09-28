@@ -310,7 +310,10 @@ export function buildCar({ style = 'sedan', color = 0xffffff, detail = true, tax
 
 export function styleDims(style) {
   const st = STYLES[style] || STYLES.sedan;
-  return { L: st.L, W: st.W, wheelbase: st.axleF - st.axleR };
+  const roof = Math.max(...st.cabin.map((p) => p[1]));
+  // windscreen base (front end of the greenhouse) and beltline height
+  const screenBase = st.cabin[st.cabin.length - 1];
+  return { L: st.L, W: st.W, wheelbase: st.axleF - st.axleR, belt: st.cabin[0][1], roof, screenZ: -screenBase[0], screenY: screenBase[1] };
 }
 
 // ---- cheap traffic cars: every part merged into one mesh per material ----
