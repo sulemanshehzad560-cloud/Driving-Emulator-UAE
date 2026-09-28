@@ -1,1 +1,42 @@
-[]
+[
+ {
+  "id": "dubai-downtown",
+  "bundled": true
+ },
+ {
+  "id": "dubai-marina",
+  "bundled": true
+ },
+ {
+  "id": "dubai-deira",
+  "bundled": true
+ },
+ {
+  "id": "abu-dhabi-corniche",
+  "bundled": true
+ },
+ {
+  "id": "al-ain",
+  "bundled": true
+ },
+ {
+  "id": "sharjah-al-majaz",
+  "bundled": true
+ },
+ {
+  "id": "ajman",
+  "bundled": true
+ },
+ {
+  "id": "umm-al-quwain",
+  "bundled": true
+ },
+ {
+  "id": "ras-al-khaimah",
+  "bundled": true
+ },
+ {
+  "id": "fujairah",
+  "bundled": true
+ }
+]
