@@ -1,0 +1,33 @@
+name: Fetch CC0 art assets
+
+# Downloads CC0 HDR skies (Poly Haven) and PBR textures (ambientCG), resizes
+# them for phones and publishes art-assets.tar.gz for the APK build.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'tools/fetch_art.py'
+      - '.github/workflows/art.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  art:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m pip install --quiet pillow
+      - name: Fetch assets
+        run: python3 tools/fetch_art.py art && cat art/manifest.json && du -sh art
+      - run: tar -czf art-assets.tar.gz art
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: art-assets
+          name: UAE Drive art assets (CC0)
+          prerelease: true
+          files: art-assets.tar.gz
+          body: |
+            CC0 HDR skies from Poly Haven and PBR materials from ambientCG, resized for mobile.
+            See art/manifest.json inside the archive for the exact sources.
