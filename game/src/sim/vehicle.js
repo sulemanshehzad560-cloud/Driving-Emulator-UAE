@@ -193,16 +193,48 @@ export class Vehicle {
     this.wheelSpin += (fwd * dt) / 0.36;
   }
 
-  /** Called after collision resolution moved the car. */
-  bounce(nx, nz, restitution = 0.25) {
+  /**
+   * Called after collision resolution moved the car. Removes the velocity into
+   * the obstacle, scrapes speed off along it, and settles the car so a crash
+   * does not leave it sliding sideways (which the tyre model would turn into a
+   * spin with no steering input). Returns the impact speed (m/s).
+   */
+  bounce(nx, nz, restitution = 0.2) {
     const vn = this.vx * nx + this.vz * nz;
-    if (vn < 0) {
-      this.vx -= (1 + restitution) * vn * nx;
-      this.vz -= (1 + restitution) * vn * nz;
-      const [fx, fz] = this.forward;
-      this.speed = this.vx * fx + this.vz * fz;
-      return -vn;
+    if (vn >= 0) return 0;
+    const impact = -vn;
+    // normal: stop going into the obstacle (plus a small rebound)
+    let vx = this.vx - (1 + restitution) * vn * nx;
+    let vz = this.vz - (1 + restitution) * vn * nz;
+    // tangential: friction against the obstacle scrubs speed in proportion to the hit
+    const tx = -nz, tz = nx;
+    const vt = vx * tx + vz * tz;
+    const scrub = Math.min(Math.abs(vt), 0.6 * (1 + restitution) * impact);
+    vx -= Math.sign(vt) * scrub * tx;
+    vz -= Math.sign(vt) * scrub * tz;
+
+    // a glancing hit steers the nose along the obstacle instead of into it
+    const sp = Math.hypot(vx, vz);
+    let [fx, fz] = this.forward;
+    const fwdSign = vx * fx + vz * fz >= 0 ? 1 : -1;
+    if (sp > 2) {
+      const dirH = Math.atan2(-vx * fwdSign, -vz * fwdSign); // heading that points along the new motion
+      let d = dirH - this.heading;
+      d = Math.atan2(Math.sin(d), Math.cos(d));
+      if (Math.abs(d) < 1.1) this.heading += d * 0.5;
+      [fx, fz] = this.forward;
     }
-    return 0;
+    // keep only a little sideways slide
+    const rx = -fz, rz = fx;
+    const fwd = vx * fx + vz * fz;
+    let lat = vx * rx + vz * rz;
+    lat = Math.sign(lat) * Math.min(Math.abs(lat) * 0.3, 1.5);
+    this.vx = fx * fwd + rx * lat;
+    this.vz = fz * fwd + rz * lat;
+    this.speed = fwd;
+    // the impact kills most of the car's rotation
+    this.yawRate *= 0.2;
+    if (this.block) this.block[OFF.S_R] *= 0.2;
+    return impact;
   }
 }

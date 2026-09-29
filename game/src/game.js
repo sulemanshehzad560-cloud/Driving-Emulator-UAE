@@ -3,7 +3,7 @@
 // cinematic render pipeline.
 import * as THREE from 'three';
 import { CinematicPipeline, gradeFor } from './render/cinematic.js';
-import { Environment, QUALITY, TIMES, SEASONS } from './render/env.js';
+import { Environment, QUALITY, TIMES, SEASONS, minPixelRatio } from './render/env.js';
 import { ReflectionProbe } from './render/probe.js';
 import { DynamicGraph } from './world/graph.js';
 import { Streamer } from './world/streamer.js';
@@ -721,16 +721,7 @@ export class Game {
     const x0 = p.x, z0 = p.z;
     p.update(dt, eff);
 
-    for (const k of [1.4, -1.4]) {
-      const cx = p.x + fx * k, cz = p.z + fz * k;
-      const res = this.streamer.collideCircle(cx, cz, 1.05);
-      if (res.hit) {
-        p.x += res.x - cx;
-        p.z += res.z - cz;
-        const impact = p.bounce(res.nx, res.nz, 0.15);
-        if (impact > 4) this.crash(impact);
-      }
-    }
+    this.collideWorld(x0, z0);
     const hit = this.traffic.collide(p);
     if (hit) {
       const impact = p.bounce(hit.nx, hit.nz, 0.3);
@@ -1026,6 +1017,41 @@ export class Game {
     return any;
   }
 
+  /**
+   * Walls, trees, posts and parked cars. The move from (x0, z0) is swept in
+   * short steps so a fast car cannot skip through a wall or a trunk between
+   * two frames.
+   */
+  collideWorld(x0, z0) {
+    const p = this.player;
+    const x1 = p.x, z1 = p.z;
+    const [fx, fz] = p.forward;
+    const steps = Math.min(40, Math.max(1, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / 0.3)));
+    for (let s = 1; s <= steps; s++) {
+      let x = x0 + ((x1 - x0) * s) / steps, z = z0 + ((z1 - z0) * s) / steps;
+      let nx = 0, nz = 0, hit = false;
+      for (const k of [1.4, -1.4]) {
+        const cx = x + fx * k, cz = z + fz * k;
+        const res = this.streamer.collideCircle(cx, cz, 1.05);
+        if (res.hit) {
+          x += res.x - cx;
+          z += res.z - cz;
+          nx += res.nx;
+          nz += res.nz;
+          hit = true;
+        }
+      }
+      if (hit) {
+        p.x = x;
+        p.z = z;
+        const l = Math.hypot(nx, nz) || 1;
+        const impact = p.bounce(nx / l, nz / l, 0.1);
+        if (impact > 4) this.crash(impact);
+        return;
+      }
+    }
+  }
+
   /** Keep the frame rate smooth by trading resolution (Auto resolution only). */
   adaptResolution(dt) {
     if (this.settings.resolution !== 'auto') return;
@@ -1041,9 +1067,11 @@ export class Game {
     if (fps > 50) pf.fast++;
     else pf.fast = 0;
     const base = this.basePixelRatio || (this.basePixelRatio = this.renderer.getPixelRatio());
+    // never drop below ~540p: lower than that the image falls apart into blocks
+    const minScale = Math.min(1, minPixelRatio() / base);
     let changed = false;
-    if (pf.slow >= 3 && pf.scale > 0.55) {
-      pf.scale = Math.max(0.55, pf.scale - 0.1);
+    if (pf.slow >= 3 && pf.scale > minScale + 1e-3) {
+      pf.scale = Math.max(minScale, pf.scale - 0.1);
       pf.slow = 0;
       changed = true;
     } else if (pf.fast >= 6 && pf.scale < 1) {

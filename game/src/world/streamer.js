@@ -191,6 +191,7 @@ export class Streamer {
       data,
       props: null,
       collision: this.collisionIndex(data),
+      obstacles: this.obstacleIndex(data),
     };
     this.tiles.set(data.key, tile);
     this.onAdd && this.onAdd(tile);
@@ -261,6 +262,52 @@ export class Streamer {
     return { polys, grid };
   }
 
+  /**
+   * Solid round obstacles from the tile's props: palm trunks, lamp and sign
+   * posts, street furniture, bus shelters and parked cars. Stored as flat
+   * [x, z, r] triples in world space, bucketed on the same 25 m grid.
+   */
+  obstacleIndex(data) {
+    const inst = data.instances || {};
+    const [ox, oy] = data.origin;
+    const pts = [];
+    const add = (x, z, r) => pts.push(ox + x, -oy + z, r);
+    const each = (arr, stride, r, fn) => {
+      if (!arr) return;
+      for (let i = 0; i + stride - 1 < arr.length; i += stride) fn ? fn(arr, i) : add(arr[i], arr[i + 1], r);
+    };
+    each(inst.palm, 4, 0, (a, i) => add(a[i], a[i + 1], 0.32 * a[i + 3]));
+    each(inst.lamp, 4, 0.2);
+    each(inst.shelter, 3, 0, (a, i) => {
+      // 4.5 x 2 m glass shelter: three overlapping circles along its length
+      const yaw = a[i + 2], ux = Math.cos(yaw), uz = -Math.sin(yaw);
+      for (const f of [-1.4, 0, 1.4]) add(a[i] + ux * f, a[i + 1] + uz * f, 1.0);
+    });
+    each(inst.bench, 3, 0.55);
+    each(inst.bin, 3, 0.3);
+    each(inst.utility, 3, 0.5);
+    for (const arr of Object.values(inst.speed || {})) each(arr, 3, 0.12);
+    if (this.q.parkedCars !== false) {
+      each(inst.parked, 4, 0, (a, i) => {
+        // parked car ~4.5 m long: three overlapping circles along its axis
+        const fx = -Math.sin(a[i + 2]), fz = -Math.cos(a[i + 2]);
+        for (const f of [-1.45, 0, 1.45]) add(a[i] + fx * f, a[i + 1] + fz * f, 0.92);
+      });
+    }
+    for (const gt of inst.gantry || []) {
+      // gantry legs stand just outside both edges of the carriageway
+      const rx = Math.cos(gt.rot), rz = -Math.sin(gt.rot), hw = gt.width / 2;
+      for (const side of [-1, 1]) add(gt.x + rx * side * hw, gt.z + rz * side * hw, 0.3);
+    }
+    const grid = new Map();
+    for (let i = 0; i < pts.length; i += 3) {
+      const k = Math.floor(pts[i] / 25) * 1000003 + Math.floor(pts[i + 1] / 25);
+      if (!grid.has(k)) grid.set(k, []);
+      grid.get(k).push(i);
+    }
+    return { pts, grid };
+  }
+
   buildingsNear(x, z) {
     const out = [];
     const [tx, ty] = tileAt(x, z);
@@ -287,9 +334,29 @@ export class Streamer {
     return false;
   }
 
-  /** Push a circle out of building walls. */
+  /** Push a circle out of building walls and solid props. */
   collideCircle(x, z, r) {
     let hit = false, nxs = 0, nzs = 0;
+    // a centre that ended up inside a footprint must leave through the nearest wall
+    // (edge tests alone would push it further in)
+    for (const p of this.buildingsNear(x, z)) {
+      if (!insidePoly(x, z, p)) continue;
+      let best = Infinity, bx = 0, bz = 0;
+      for (let i = 0; i < p.length; i++) {
+        const a = p[i], c = p[(i + 1) % p.length];
+        const dx = c[0] - a[0], dz = c[1] - a[1];
+        const l2 = dx * dx + dz * dz || 1;
+        const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / l2));
+        const px = a[0] + dx * t, pz = a[1] + dz * t;
+        const d = Math.hypot(x - px, z - pz);
+        if (d < best) { best = d; bx = px; bz = pz; }
+      }
+      const ox = (bx - x) / (best || 1), oz = (bz - z) / (best || 1);
+      x = bx + ox * (r + 0.01);
+      z = bz + oz * (r + 0.01);
+      nxs += ox; nzs += oz;
+      hit = true;
+    }
     for (let iter = 0; iter < 2; iter++) {
       const seen = new Set();
       for (let di = -1; di <= 1; di++) {
@@ -319,9 +386,49 @@ export class Streamer {
         }
       }
     }
+    // round props (trees, posts, parked cars…)
+    for (const [ob, i] of this.obstaclesNear(x, z)) {
+      const ox0 = x - ob[i], oz0 = z - ob[i + 1];
+      const R = r + ob[i + 2];
+      const d = Math.hypot(ox0, oz0);
+      if (d >= R) continue;
+      const ox = d > 1e-4 ? ox0 / d : 1, oz = d > 1e-4 ? oz0 / d : 0;
+      x = ob[i] + ox * R;
+      z = ob[i + 1] + oz * R;
+      nxs += ox; nzs += oz;
+      hit = true;
+    }
     const nl = Math.hypot(nxs, nzs) || 1;
     return { x, z, nx: nxs / nl, nz: nzs / nl, hit };
   }
+
+  /** [pts, index] pairs for the obstacles in the grid cells around (x, z). */
+  obstaclesNear(x, z) {
+    const out = [];
+    const [tx, ty] = tileAt(x, z);
+    const ci = Math.floor(x / 25), cj = Math.floor(z / 25);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const t = this.tiles.get(`${tx + dx}_${ty + dy}`);
+        if (!t || !t.obstacles) continue;
+        for (let di = -1; di <= 1; di++) {
+          for (let dj = -1; dj <= 1; dj++) {
+            const list = t.obstacles.grid.get((ci + di) * 1000003 + (cj + dj));
+            if (list) for (const i of list) out.push([t.obstacles.pts, i]);
+          }
+        }
+      }
+    }
+    return out;
+  }
+}
+
+function insidePoly(x, z, p) {
+  let inside = false;
+  for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
+    if ((p[i][1] > z) !== (p[j][1] > z) && x < ((p[j][0] - p[i][0]) * (z - p[i][1])) / (p[j][1] - p[i][1]) + p[i][0]) inside = !inside;
+  }
+  return inside;
 }
 
 function stopSignList(data) {

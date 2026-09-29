@@ -24,9 +24,9 @@ export const CinematicShader = {
     uHorizon: { value: 0.5 }, // screen-space y of the horizon (0 bottom .. 1 top)
     uHaze: { value: 0 }, // heat shimmer strength
     uSpeed: { value: 0 }, // 0..1 motion blur amount
-    uAberration: { value: 0.6 },
+    uAberration: { value: 0.12 }, // subtle: stronger splits look like broken pixels on phone screens
     uVignette: { value: 0.35 },
-    uGrain: { value: 0.035 },
+    uGrain: { value: 0.0 }, // per-pixel noise reads as dead/flickering pixels on phones
     uLift: { value: new THREE.Vector3(0.0, 0.0, 0.01) },
     uGamma: { value: new THREE.Vector3(1.0, 1.0, 1.0) },
     uGain: { value: new THREE.Vector3(1.04, 1.0, 0.95) },
@@ -74,15 +74,15 @@ export const CinematicShader = {
       if (uHaze > 0.0) {
         float band = smoothstep(0.12, 0.0, abs(uv.y - uHorizon - 0.02));
         float wave = sin(uv.y * 380.0 + uTime * 7.0) * 0.6 + sin(uv.y * 170.0 - uTime * 4.3 + uv.x * 30.0) * 0.4;
-        uv.x += wave * band * uHaze * 0.0022;
-        uv.y += cos(uv.x * 220.0 + uTime * 5.0) * band * uHaze * 0.0012;
+        uv.x += wave * band * uHaze * 0.0008;
+        uv.y += cos(uv.x * 220.0 + uTime * 5.0) * band * uHaze * 0.0004;
       }
 
       // 2. radial speed blur towards the vanishing point
       vec3 col;
-      float ca = uAberration * (0.4 + dist * 2.2) * (1.0 + uSpeed * 2.0);
+      float ca = uAberration * smoothstep(0.25, 0.7, dist) * (1.0 + uSpeed);
       if (uSpeed > 0.01) {
-        vec2 dir = fromCentre * uSpeed * 0.045;
+        vec2 dir = fromCentre * uSpeed * 0.025;
         col = vec3(0.0);
         float wsum = 0.0;
         for (int i = 0; i < 8; i++) {
@@ -113,17 +113,30 @@ export const CinematicShader = {
 };
 
 const SanitizeShader = {
-  uniforms: { tDiffuse: { value: null } },
+  uniforms: { tDiffuse: { value: null }, uTexel: { value: new THREE.Vector2(1 / 1024, 1 / 1024) } },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
     void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
   fragmentShader: /* glsl */ `
     uniform sampler2D tDiffuse;
+    uniform vec2 uTexel;
     varying vec2 vUv;
+    bool bad(vec4 c) {
+      return c.r != c.r || c.g != c.g || c.b != c.b || c.a != c.a || max(c.r, max(c.g, c.b)) > 6.0e4;
+    }
     void main() {
       vec4 c = texture2D(tDiffuse, vUv);
-      bvec4 bad = bvec4(c.r != c.r || c.r > 6.0e4, c.g != c.g || c.g > 6.0e4, c.b != c.b || c.b > 6.0e4, c.a != c.a);
-      if (any(bad)) c = vec4(0.0, 0.0, 0.0, 1.0);
+      if (bad(c)) {
+        // fill the broken pixel from its neighbours instead of painting a black dot
+        vec4 sum = vec4(0.0);
+        float n = 0.0;
+        for (int i = 0; i < 4; i++) {
+          vec2 o = i == 0 ? vec2(1.0, 0.0) : i == 1 ? vec2(-1.0, 0.0) : i == 2 ? vec2(0.0, 1.0) : vec2(0.0, -1.0);
+          vec4 s = texture2D(tDiffuse, vUv + o * uTexel);
+          if (!bad(s)) { sum += s; n += 1.0; }
+        }
+        c = n > 0.0 ? sum / n : vec4(0.0, 0.0, 0.0, 1.0);
+      }
       gl_FragColor = vec4(min(c.rgb, vec3(512.0)), c.a);
     }`,
 };
@@ -175,7 +188,8 @@ export class CinematicPipeline {
     }
     // guard: a single NaN/Inf pixel (degenerate normals in a detailed model, half-float
     // overflow on a hot emissive) would otherwise be smeared over the frame by bloom
-    this.composer.addPass(new ShaderPass(SanitizeShader));
+    this.sanitize = new ShaderPass(SanitizeShader);
+    this.composer.addPass(this.sanitize);
     if (quality.bloom) {
       // HDR scene: only genuinely bright things (lamps, sun glints) should bloom
       this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.18, 0.35, 2.5);
@@ -192,6 +206,7 @@ export class CinematicPipeline {
     this.composer.setSize(w, h);
     const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     this.grade.uniforms.uResolution.value.copy(size);
+    this.sanitize.uniforms.uTexel.value.set(1 / size.x, 1 / size.y);
   }
 
   setGrade(g) {

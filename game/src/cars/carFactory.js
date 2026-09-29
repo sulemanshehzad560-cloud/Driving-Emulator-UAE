@@ -376,21 +376,25 @@ export function buildCar({ style = 'sedan', color = 0xffffff, detail = true, tax
   // interior visible through the glass
   if (see) {
     const seatMat = M.seat();
-    const floorY = st.ride + 0.35;
+    // seats must fit under the roof: low supercars sit the driver lower and use
+    // shorter seat backs (fixed-size seats poked their headrests through the roof)
+    const headroom = roofTop - 0.1;
+    const floorY = Math.max(st.ride + 0.1, Math.min(st.ride + 0.35, headroom - 0.96));
+    const k = Math.min(1, (headroom - floorY) / 0.96); // vertical scale of the seat stack
     const midU = (st.cabin[0][0] + st.cabin[st.cabin.length - 1][0]) / 2;
     const seats = style === 'super' || style === 'hyper' || st.spoiler ? [[midU + 0.1, 1]] : [[midU + 0.35, 1], [midU - 0.55, 0]];
     for (const [u, front] of seats) {
       for (const s of front ? [-1, 1] : [0]) {
         const w = front ? 0.5 : cabinW * 0.8;
-        const cushion = new THREE.Mesh(new THREE.BoxGeometry(w, 0.14, 0.5), seatMat);
-        cushion.position.set(s * 0.38, floorY + 0.12, -u);
-        const back = new THREE.Mesh(new THREE.BoxGeometry(w, 0.62, 0.12), seatMat);
-        back.position.set(s * 0.38, floorY + 0.45, -u + 0.28);
+        const cushion = new THREE.Mesh(new THREE.BoxGeometry(w, 0.14 * k, 0.5), seatMat);
+        cushion.position.set(s * 0.38, floorY + 0.12 * k, -u);
+        const back = new THREE.Mesh(new THREE.BoxGeometry(w, 0.62 * k, 0.12), seatMat);
+        back.position.set(s * 0.38, floorY + 0.45 * k, -u + 0.28);
         back.rotation.x = 0.18;
         car.add(cushion, back);
         if (front) {
-          const head = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.2, 0.1), seatMat);
-          head.position.set(s * 0.38, floorY + 0.86, -u + 0.33);
+          const head = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.2 * k, 0.1), seatMat);
+          head.position.set(s * 0.38, floorY + 0.86 * k, -u + 0.33);
           car.add(head);
         }
       }

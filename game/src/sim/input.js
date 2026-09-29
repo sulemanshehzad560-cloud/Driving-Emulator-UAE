@@ -19,13 +19,30 @@ export class Input {
     window.addEventListener('keyup', this._onKey);
     this._onOrient = (e) => this.onOrientation(e);
     window.addEventListener('deviceorientation', this._onOrient);
+    this._onMotion = (e) => this.onMotion(e);
+    window.addEventListener('devicemotion', this._onMotion);
+    this.hasMotion = false;
+    // a key or touch released while the app was in the background never sends its
+    // "up" event: clear everything so the car does not keep steering by itself
+    this._release = () => this.releaseAll();
+    window.addEventListener('blur', this._release);
+    document.addEventListener('visibilitychange', this._release);
   }
 
   destroy() {
     window.removeEventListener('keydown', this._onKey);
     window.removeEventListener('keyup', this._onKey);
     window.removeEventListener('deviceorientation', this._onOrient);
+    window.removeEventListener('devicemotion', this._onMotion);
+    window.removeEventListener('blur', this._release);
+    document.removeEventListener('visibilitychange', this._release);
     this.root.innerHTML = '';
+  }
+
+  releaseAll() {
+    this.keys.clear();
+    for (const k of Object.keys(this.raw)) this.raw[k] = false;
+    this.root.querySelectorAll('.down').forEach((el) => el.classList.remove('down'));
   }
 
   hold(el, key) {
@@ -101,19 +118,49 @@ export class Input {
 
   setMode(mode) {
     this.mode = mode;
+    this.tiltZero = null; // re-centre on the way the phone is held right now
     this.root.dataset.mode = mode;
     if (mode === 'tilt' && typeof DeviceOrientationEvent !== 'undefined' && DeviceOrientationEvent.requestPermission) {
       DeviceOrientationEvent.requestPermission().catch(() => {});
     }
   }
 
+  /**
+   * Tilt from gravity: the roll of the screen like a steering wheel, measured
+   * in the screen plane, so it does not change when the phone is tipped
+   * forwards/backwards (Euler beta/gamma do, which made the car wander).
+   */
+  onMotion(e) {
+    const g = e.accelerationIncludingGravity;
+    if (!g || g.x == null || g.y == null) return;
+    const a = (((screen.orientation && screen.orientation.angle) || window.orientation || 0) * Math.PI) / 180;
+    const sx = g.x * Math.cos(a) - g.y * Math.sin(a);
+    const sy = g.x * Math.sin(a) + g.y * Math.cos(a);
+    if (Math.hypot(sx, sy) < 2.5) return; // phone lying flat: roll is undefined, keep the last value
+    if (!this.hasMotion) {
+      this.hasMotion = true;
+      this.tiltZero = null; // switch from the orientation fallback: re-centre
+    }
+    this.feedTilt((-Math.atan2(sx, sy) * 180) / Math.PI);
+  }
+
+  feedTilt(v) {
+    if (this.tiltZero === null) {
+      this.tiltZero = v;
+      this.tiltSmooth = 0;
+    }
+    let d = v - this.tiltZero;
+    d = ((d + 540) % 360) - 180; // wrap: works for either sensor sign convention
+    this.tiltSmooth += (d - this.tiltSmooth) * 0.35; // low-pass sensor noise
+    this.tilt = this.tiltSmooth;
+  }
+
   onOrientation(e) {
-    if (e.beta == null) return;
+    if (this.hasMotion || e.beta == null) return; // gravity-based tilt is preferred
     const angle = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
     // In landscape the "steering" rotation of the phone shows up in beta.
     let v = angle === 90 ? e.beta : angle === -90 || angle === 270 ? -e.beta : e.gamma;
-    if (this.tiltZero === null) this.tiltZero = v;
-    this.tilt = v - this.tiltZero;
+    this.feedTilt(v);
   }
 
   onKey(e) {
@@ -148,7 +195,10 @@ export class Input {
       if (!this.wheelActive()) this.wheelAngle *= Math.max(0, 1 - dt * 4); // self-centering
       steer = this.wheelAngle / 2.4;
     } else if (this.mode === 'tilt') {
-      steer = Math.max(-1, Math.min(1, (this.tilt / 28) * this.sensitivity));
+      // dead zone so a phone held not-quite-level does not steer on its own
+      const DEAD = 3, FULL = 28;
+      const t = Math.max(0, Math.abs(this.tilt) - DEAD) * Math.sign(this.tilt);
+      steer = Math.max(-1, Math.min(1, (t / (FULL - DEAD)) * this.sensitivity));
     } else {
       steer = ramp(s.steer, 0, 3, 4);
     }
