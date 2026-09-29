@@ -42,7 +42,7 @@ export class Vehicle {
     const fmax = ((m * 27.8) / s.accel) * 1.15;
     const power = fmax * 17;
     const roll = 0.012 * m * 9.81;
-    const tall = s.style === 'suv' || s.style === 'boxy' || s.style === 'van';
+    const tall = s.style === 'suv' || s.style === 'boxy' || s.style === 'g63' || s.style === 'van';
     const low = s.style === 'super' || s.style === 'hyper' || s.style === 'gt';
     view[OFF.P_MASS] = m;
     view[OFF.P_A] = this.wheelbase * (low ? 0.54 : 0.47);
@@ -58,7 +58,7 @@ export class Vehicle {
     view[OFF.P_STEER_HI] = 0.05 + s.handling * 0.05;
     view[OFF.P_STEER_RATE] = 2.2 + s.handling * 2;
     view[OFF.P_TOP] = top;
-    view[OFF.P_AWD] = low || s.style === 'boxy' || s.style === 'suv' ? 1 : 0;
+    view[OFF.P_AWD] = low || s.style === 'boxy' || s.style === 'g63' || s.style === 'suv' ? 1 : 0;
   }
 
   updateCore(dt, input) {

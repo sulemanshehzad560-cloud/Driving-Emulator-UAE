@@ -1,15 +1,19 @@
-// Sky, sun, time of day, UAE seasons / weather and graphics quality presets.
+// Lighting & atmosphere: HDR sky photos (Poly Haven, CC0) or a physical sky,
+// sun aligned with the sky photo, image-based lighting, auto exposure from
+// sky luminance, height-attenuated haze (tall towers rise above it), UAE
+// seasons / weather and graphics quality presets.
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
-import { physicsCore } from '../sim/physicsCore.js';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { Lensflare, LensflareElement } from 'three/examples/jsm/objects/Lensflare.js';
 import { glowTexture } from './textures.js';
+import { physicsCore } from '../sim/physicsCore.js';
 
 export const QUALITY = {
-  low: { name: 'Low', post: false, msaa: 0, ao: false, flare: false, shadows: false, shadowMap: 0, maxBuildings: 2500, maxPalms: 600, maxLamps: 300, traffic: 8, far: 650, bloom: false, mirrorEvery: 3, mirrorScale: 0.5 },
-  medium: { name: 'Medium', post: true, msaa: 2, ao: false, flare: false, shadows: true, shadowMap: 1024, maxBuildings: 5000, maxPalms: 1800, maxLamps: 800, traffic: 14, far: 1000, bloom: false, mirrorEvery: 2, mirrorScale: 0.75 },
-  high: { name: 'High', post: true, msaa: 4, ao: false, flare: true, shadows: true, shadowMap: 2048, maxBuildings: 7000, maxPalms: 3500, maxLamps: 1500, traffic: 22, far: 1500, bloom: true, mirrorEvery: 1, mirrorScale: 1 },
-  ultra: { name: 'Ultra', post: true, msaa: 4, ao: true, flare: true, shadows: true, shadowMap: 4096, maxBuildings: 9000, maxPalms: 5000, maxLamps: 2500, traffic: 30, far: 2200, bloom: true, mirrorEvery: 1, mirrorScale: 1.25 },
+  low: { name: 'Low', post: false, msaa: 0, ao: false, flare: false, probe: false, shadows: false, propShadows: false, shadowMap: 0, tileRadius: 1100, propRadius: 450, maxBuildingsPerTile: 1200, traffic: 10, far: 1400, bloom: false, mirrorEvery: 3, mirrorScale: 0.5, parkedCars: false },
+  medium: { name: 'Medium', post: true, msaa: 2, ao: false, flare: false, probe: false, shadows: true, propShadows: false, shadowMap: 1024, tileRadius: 1400, propRadius: 650, maxBuildingsPerTile: 2500, traffic: 18, far: 1900, bloom: false, mirrorEvery: 2, mirrorScale: 0.75, parkedCars: true },
+  high: { name: 'High', post: true, msaa: 4, ao: false, flare: true, probe: true, shadows: true, propShadows: true, shadowMap: 2048, tileRadius: 1700, propRadius: 850, maxBuildingsPerTile: 4000, traffic: 26, far: 2400, bloom: true, mirrorEvery: 1, mirrorScale: 1, parkedCars: true },
+  ultra: { name: 'Ultra', post: true, msaa: 4, ao: true, flare: true, probe: true, shadows: true, propShadows: true, shadowMap: 4096, tileRadius: 2100, propRadius: 1100, maxBuildingsPerTile: 6000, traffic: 34, far: 3000, bloom: true, mirrorEvery: 1, mirrorScale: 1.25, parkedCars: true },
 };
 
 export const RESOLUTIONS = {
@@ -21,11 +25,11 @@ export const RESOLUTIONS = {
 };
 
 export const SEASONS = {
-  summer: { name: 'Summer (hazy)', fog: 0xcdbb9a, fogDensity: 1.0, sunBoost: 1.1, turbidity: 6, clouds: 0, particles: null, wet: false },
-  winter: { name: 'Winter (clear)', fog: 0xbfd3e6, fogDensity: 0.55, sunBoost: 1.0, turbidity: 3, clouds: 0, particles: null, wet: false },
-  rain: { name: 'Winter rain', fog: 0x8b929a, fogDensity: 2.2, sunBoost: 0.45, turbidity: 12, clouds: 1, particles: 'rain', wet: true },
-  sandstorm: { name: 'Sandstorm (shamal)', fog: 0xc79a5e, fogDensity: 4.5, sunBoost: 0.6, turbidity: 20, clouds: 0, particles: 'dust', wet: false },
-  fog: { name: 'Morning fog', fog: 0xd7dadd, fogDensity: 5, sunBoost: 0.7, turbidity: 10, clouds: 0, particles: null, wet: false },
+  summer: { name: 'Summer (hazy)', hdri: 'clear', haze: [0.92, 0.84, 0.72], fogDensity: 1.0, sunBoost: 1.1, particles: null, wet: false },
+  winter: { name: 'Winter (clear)', hdri: 'day', haze: [0.78, 0.86, 0.95], fogDensity: 0.55, sunBoost: 1.0, particles: null, wet: false },
+  rain: { name: 'Winter rain', hdri: 'overcast', haze: [0.62, 0.65, 0.7], fogDensity: 2.2, sunBoost: 0.4, particles: 'rain', wet: true },
+  sandstorm: { name: 'Sandstorm (shamal)', hdri: 'overcast', haze: [0.8, 0.62, 0.4], fogDensity: 5, sunBoost: 0.55, particles: 'dust', wet: false },
+  fog: { name: 'Morning fog', hdri: 'overcast', haze: [0.85, 0.86, 0.87], fogDensity: 5.5, sunBoost: 0.65, particles: null, wet: false },
 };
 
 export const TIMES = {
@@ -60,66 +64,148 @@ export function pixelRatioFor(resolution, quality) {
   return Math.min(dpr, caps[quality] || 1.25);
 }
 
+// ---- height fog: haze thins out with altitude so skylines rise above it ----
+let fogPatched = false;
+export function patchFog() {
+  if (fogPatched) return;
+  fogPatched = true;
+  THREE.ShaderChunk.fog_pars_vertex = `#ifdef USE_FOG
+  varying float vFogDepth;
+  varying float vFogHeight;
+#endif`;
+  THREE.ShaderChunk.fog_vertex = `#ifdef USE_FOG
+  vFogDepth = - mvPosition.z;
+  vFogHeight = (inverse(viewMatrix) * mvPosition).y;
+#endif`;
+  THREE.ShaderChunk.fog_pars_fragment = `#ifdef USE_FOG
+  uniform vec3 fogColor;
+  varying float vFogDepth;
+  varying float vFogHeight;
+  #ifdef FOG_EXP2
+    uniform float fogDensity;
+  #else
+    uniform float fogNear;
+    uniform float fogFar;
+  #endif
+#endif`;
+  THREE.ShaderChunk.fog_fragment = `#ifdef USE_FOG
+  #ifdef FOG_EXP2
+    float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );
+    fogFactor *= mix(1.0, exp( - max( vFogHeight, 0.0 ) * 0.0045 ), 0.85);
+  #else
+    float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
+  #endif
+  gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );
+#endif`;
+}
+
+function luminance(r, g, b) {
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** Analyse an equirect HDR: sun direction/elevation, average & horizon colour. */
+function analyseHdr(tex) {
+  const { data, width: w, height: h } = tex.image;
+  const stride = data.length / (w * h);
+  let best = -1, bx = 0, by = 0;
+  let avg = 0, n = 0;
+  const hor = [0, 0, 0];
+  let hn = 0;
+  for (let y = 0; y < h; y += 2) {
+    for (let x = 0; x < w; x += 2) {
+      const i = (y * w + x) * stride;
+      const L = luminance(data[i], data[i + 1], data[i + 2]);
+      const v = 1 - (y + 0.5) / h;
+      if (v > 0.5) {
+        avg += Math.min(L, 50);
+        n++;
+        if (L > best) { best = L; bx = x; by = y; }
+      }
+      if (v > 0.5 && v < 0.56) {
+        hor[0] += data[i]; hor[1] += data[i + 1]; hor[2] += data[i + 2];
+        hn++;
+      }
+    }
+  }
+  const u = (bx + 0.5) / w, v = 1 - (by + 0.5) / h;
+  return {
+    sunAz: (u - 0.5) * Math.PI * 2,
+    sunEl: (v - 0.5) * Math.PI,
+    sunPeak: best,
+    avgLum: avg / Math.max(1, n),
+    horizon: hor.map((c) => c / Math.max(1, hn)),
+  };
+}
+
 export class Environment {
-  constructor(scene, renderer, quality) {
+  constructor(scene, renderer, quality, art) {
+    patchFog();
     this.scene = scene;
     this.renderer = renderer;
     this.quality = quality;
+    this.art = art;
+    this.hdr = new Map();
+    this.loader = new HDRLoader().setDataType(THREE.FloatType);
     this.sky = new Sky();
     this.sky.scale.setScalar(20000);
     scene.add(this.sky);
-    this.sunDir = new THREE.Vector3();
-    this.hemi = new THREE.HemisphereLight(0xdbe8ff, 0xc9a877, 0.6);
+    this.sunDir = new THREE.Vector3(0, 1, 0);
+    this.hemi = new THREE.HemisphereLight(0xdbe8ff, 0xc9a877, 0.35);
     scene.add(this.hemi);
-    // sodium-orange glow of a lit city at night (street lamps, billboards)
-    this.cityGlow = new THREE.AmbientLight(0xffb070, 0);
-    scene.add(this.cityGlow);
-    this.sun = new THREE.DirectionalLight(0xffffff, 2.6);
+    this.sun = new THREE.DirectionalLight(0xffffff, 3);
     if (quality.shadows) {
       this.sun.castShadow = true;
       this.sun.shadow.mapSize.set(quality.shadowMap, quality.shadowMap);
-      const d = 90;
-      Object.assign(this.sun.shadow.camera, { left: -d, right: d, top: d, bottom: -d, near: 1, far: 600 });
-      this.sun.shadow.bias = -0.0004;
-      this.sun.shadow.normalBias = 0.04;
+      const d = 110;
+      Object.assign(this.sun.shadow.camera, { left: -d, right: d, top: d, bottom: -d, near: 1, far: 900 });
+      this.sun.shadow.bias = -0.0003;
+      this.sun.shadow.normalBias = 0.05;
+      this.sun.shadow.radius = 3;
     }
     scene.add(this.sun, this.sun.target);
-    scene.fog = new THREE.FogExp2(0xd9c7a6, 0.0012);
+    this.cityGlow = new THREE.AmbientLight(0xffb070, 0);
+    scene.add(this.cityGlow);
+    scene.fog = new THREE.FogExp2(0xd9c7a6, 0.0006);
     this.pmrem = new THREE.PMREMGenerator(renderer);
     this.envScene = new THREE.Scene();
     this.envSky = new Sky();
     this.envSky.scale.setScalar(1000);
     this.envScene.add(this.envSky);
-    this.stars = this.makeStars();
-    scene.add(this.stars);
     this.particles = null;
     this.night = 0;
+    this.exposure = 0.6;
     if (quality.flare) {
-      // cinematic sun flare with ghosts along the lens axis
       const glow = glowTexture();
       this.flare = new Lensflare();
-      this.flare.addElement(new LensflareElement(glow, 220, 0, new THREE.Color(1, 0.95, 0.8)));
+      this.flare.addElement(new LensflareElement(glow, 200, 0, new THREE.Color(1, 0.95, 0.8)));
       this.flare.addElement(new LensflareElement(glow, 60, 0.4, new THREE.Color(1, 0.7, 0.4)));
       this.flare.addElement(new LensflareElement(glow, 90, 0.65, new THREE.Color(0.6, 0.8, 1)));
-      this.flare.addElement(new LensflareElement(glow, 140, 0.9, new THREE.Color(1, 0.85, 0.6)));
-      this.flare.addElement(new LensflareElement(glow, 50, 1.1, new THREE.Color(0.7, 1, 0.8)));
+      this.flare.addElement(new LensflareElement(glow, 130, 0.9, new THREE.Color(1, 0.85, 0.6)));
       scene.add(this.flare);
     }
   }
 
-  makeStars() {
-    const n = 1500;
-    const pos = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) {
-      const u = Math.random() * Math.PI * 2, v = Math.random() * 0.45 + 0.05;
-      const r = 9000;
-      pos.set([Math.cos(u) * Math.cos(v) * r, Math.sin(v) * r, Math.sin(u) * Math.cos(v) * r], i * 3);
+  async loadHdr(slot) {
+    if (this.hdr.has(slot)) return this.hdr.get(slot);
+    const entry = this.art?.manifest?.hdri?.[slot];
+    if (!entry || this.quality.name === 'Low') return null;
+    try {
+      const tex = await this.loader.loadAsync(`${this.art.base}/${entry.file}`);
+      tex.mapping = THREE.EquirectangularReflectionMapping;
+      const info = analyseHdr(tex);
+      const env = this.pmrem.fromEquirectangular(tex).texture;
+      const rec = { tex, env, info };
+      this.hdr.set(slot, rec);
+      return rec;
+    } catch (e) {
+      console.warn('[env] HDR failed', slot, e.message);
+      this.hdr.set(slot, null);
+      return null;
     }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    const pts = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 18, sizeAttenuation: true, transparent: true, opacity: 0, fog: false, depthWrite: false }));
-    pts.frustumCulled = false;
-    return pts;
+  }
+
+  async preload() {
+    await Promise.all(['day', 'clear', 'sunset', 'night', 'overcast'].map((s) => this.loadHdr(s)));
   }
 
   /** hour: 0..24, season key */
@@ -127,51 +213,75 @@ export class Environment {
     const season = SEASONS[seasonKey] || SEASONS.summer;
     this.season = season;
     this.hour = hour;
-    // sun path for ~25° N latitude
-    const dayT = (hour - 6) / 12; // 0 at sunrise, 1 at sunset
-    const elevation = Math.sin(Math.PI * dayT) * (seasonKey === 'winter' || seasonKey === 'rain' ? 48 : 82);
-    const azimuth = 90 + dayT * 180; // east -> west through the south
-    const phi = THREE.MathUtils.degToRad(90 - elevation);
-    const theta = THREE.MathUtils.degToRad(180 - azimuth);
-    this.sunDir.setFromSphericalCoords(1, phi, theta);
+    const dayT = (hour - 6) / 12;
+    const maxEl = seasonKey === 'winter' || seasonKey === 'rain' ? 48 : 82;
+    let elevation = Math.sin(Math.PI * dayT) * maxEl;
+    const azimuth = 90 + dayT * 180;
     const night = THREE.MathUtils.clamp((-elevation + 4) / 10, 0, 1);
-    this.night = night;
     const low = THREE.MathUtils.clamp(1 - elevation / 25, 0, 1) * (1 - night);
+    this.night = night;
 
-    for (const s of [this.sky, this.envSky]) {
-      const u = s.material.uniforms;
-      u.turbidity.value = season.turbidity;
-      u.rayleigh.value = 1.2 + low * 1.5 + season.clouds * 2;
-      u.mieCoefficient.value = 0.005 + season.clouds * 0.02;
-      u.mieDirectionalG.value = 0.85;
-      u.sunPosition.value.copy(this.sunDir);
-    }
-    this.sky.visible = night < 0.98;
+    let slot = season.hdri;
+    if (night > 0.6) slot = 'night';
+    else if (low > 0.45 && !season.wet && seasonKey !== 'sandstorm' && seasonKey !== 'fog') slot = 'sunset';
+    const hdr = this.hdr.get(slot);
+
+    const theta = THREE.MathUtils.degToRad(180 - azimuth);
+    if (hdr && night < 0.6 && slot !== 'overcast') elevation = THREE.MathUtils.radToDeg(hdr.info.sunEl);
+    const lightEl = night > 0.6 ? 35 : Math.max(elevation, 3);
+    this.sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - lightEl), theta);
+    const sunWorldAz = Math.atan2(this.sunDir.z, this.sunDir.x);
+
     const dayI = (1 - night) * season.sunBoost;
-    this.sun.intensity = Math.max(0.05, dayI * (2.8 - low * 1.4));
-    this.sun.color.setHSL(0.09 + (1 - low) * 0.04, 0.6 * low + 0.1, 0.55 + (1 - low) * 0.4);
-    this.hemi.intensity = 0.3 + dayI * 0.45;
+    if (hdr) {
+      this.sky.visible = false;
+      this.scene.background = hdr.tex;
+      this.scene.environment = hdr.env;
+      const rot = hdr.info.sunAz - sunWorldAz;
+      this.scene.backgroundRotation.set(0, rot, 0);
+      this.scene.environmentRotation.set(0, rot, 0);
+      const key = night > 0.6 ? 0.5 : 0.24;
+      this.exposure = THREE.MathUtils.clamp(key / Math.max(0.02, hdr.info.avgLum), 0.05, 6);
+      this.scene.backgroundIntensity = 1;
+      this.scene.environmentIntensity = night > 0.6 ? 1.6 : 0.8;
+      const hc = hdr.info.horizon;
+      const fog = new THREE.Color(hc[0], hc[1], hc[2]).multiplyScalar(0.85);
+      const hz = new THREE.Color(...season.haze).multiplyScalar(fog.r * 0.3 + fog.g * 0.5 + fog.b * 0.2);
+      fog.lerp(hz, 0.35);
+      this.scene.fog.color.copy(fog);
+      this.sun.intensity = night > 0.6 ? 0.25 / this.exposure : Math.max(0.1, (2.2 + 1.2 * (1 - low)) * dayI) / Math.max(0.35, this.exposure * 0.9);
+    } else {
+      this.sky.visible = night < 0.98;
+      for (const s of [this.sky, this.envSky]) {
+        const u = s.material.uniforms;
+        u.turbidity.value = seasonKey === 'summer' ? 6 : season.wet ? 12 : seasonKey === 'sandstorm' ? 20 : 3;
+        u.rayleigh.value = 1.2 + low * 1.5 + (season.wet ? 2 : 0);
+        u.mieCoefficient.value = 0.005 + (season.wet ? 0.02 : 0);
+        u.mieDirectionalG.value = 0.85;
+        u.sunPosition.value.copy(this.sunDir);
+      }
+      this.scene.background = night > 0.98 ? new THREE.Color(0x05070d) : null;
+      if (this.envRT) this.envRT.dispose();
+      this.envRT = this.pmrem.fromScene(this.envScene, 0, 1, 1000);
+      this.scene.environment = this.envRT.texture;
+      this.scene.environmentIntensity = 0.12 + dayI * 0.28;
+      this.exposure = 0.42 + dayI * 0.12 + night * 0.35;
+      const fogCol = new THREE.Color(...season.haze);
+      if (low > 0) fogCol.lerp(new THREE.Color(0xf0a060), low * 0.45);
+      fogCol.lerp(new THREE.Color(0x0a0f1c), night * 0.92);
+      this.scene.fog.color.copy(fogCol);
+      this.sun.intensity = Math.max(0.05, dayI * (2.8 - low * 1.4));
+    }
+    this.renderer.toneMappingExposure = this.exposure;
+    this.sun.color.setHSL(0.09 + (1 - low) * 0.04, 0.55 * low + 0.1, 0.55 + (1 - low) * 0.4);
+    if (night > 0.6) this.sun.color.set(0x9db4ff);
+    this.hemi.intensity = hdr ? (0.08 + dayI * 0.1) / Math.max(0.3, this.exposure) : 0.3 + dayI * 0.45;
     this.hemi.color.set(night > 0.5 ? 0x4a5f8c : 0xdbe8ff);
-    this.stars.material.opacity = night;
-    this.cityGlow.intensity = night * 0.55;
-
-    const fogCol = new THREE.Color(season.fog);
-    if (low > 0) fogCol.lerp(new THREE.Color(0xf0a060), low * 0.45);
-    fogCol.lerp(new THREE.Color(0x0a0f1c), night * 0.92);
-    this.scene.fog.color.copy(fogCol);
-    this.scene.fog.density = 0.0009 * season.fogDensity * (700 / this.quality.far + 0.5);
-    this.scene.background = night > 0.98 ? new THREE.Color(0x05070d) : null;
-    this.renderer.toneMappingExposure = 0.42 + dayI * 0.12 + night * 0.35;
-
-    // reflections for car paint & glass
-    if (this.envRT) this.envRT.dispose();
-    this.envRT = this.pmrem.fromScene(this.envScene, 0, 1, 1000);
-    this.scene.environment = this.envRT.texture;
-    this.scene.environmentIntensity = 0.12 + dayI * 0.28;
-
+    this.cityGlow.intensity = night * (hdr ? 0.35 / Math.max(0.3, this.exposure) : 0.55);
+    this.scene.fog.density = 0.00055 * season.fogDensity * (2000 / this.quality.far);
     this.setParticles(season.particles);
     if (this.flare) this.flare.visible = night < 0.3 && elevation > 2 && !season.particles && season.fogDensity < 2;
-    return { night, wet: season.wet, sunset: low };
+    return { night, wet: season.wet, sunset: low, slot, hdr: !!hdr };
   }
 
   setParticles(kind) {
@@ -186,29 +296,30 @@ export class Environment {
     const stride = kind === 'rain' ? 6 : 3;
     const core = physicsCore();
     this.particleCore = core && core.particles.max >= n ? core : null;
-    // with the Rust core the vertex buffer lives in WebAssembly memory
     const pos = this.particleCore ? this.particleCore.particles.out.view.subarray(0, n * stride) : new Float32Array(n * stride);
     this.particleData = this.particleCore ? this.particleCore.particles.local.view.subarray(0, n * 3) : new Float32Array(n * 3);
     this.particleCount = n;
-    for (let i = 0; i < n; i++) {
-      this.particleData.set([(Math.random() - 0.5) * 120, Math.random() * 40, (Math.random() - 0.5) * 120], i * 3);
-    }
+    for (let i = 0; i < n; i++) this.particleData.set([(Math.random() - 0.5) * 120, Math.random() * 40, (Math.random() - 0.5) * 120], i * 3);
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    if (kind === 'rain') {
-      this.particles = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xaab4c0, transparent: true, opacity: 0.45 }));
-    } else {
-      this.particles = new THREE.Points(g, new THREE.PointsMaterial({ color: 0xd1a56a, size: 0.35, transparent: true, opacity: 0.6, depthWrite: false }));
-    }
+    this.particles = kind === 'rain'
+      ? new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xaab4c0, transparent: true, opacity: 0.45 }))
+      : new THREE.Points(g, new THREE.PointsMaterial({ color: 0xd1a56a, size: 0.35, transparent: true, opacity: 0.6, depthWrite: false }));
     this.particles.frustumCulled = false;
     this.scene.add(this.particles);
   }
 
   update(dt, focus, wind = 0) {
-    // keep the sun shadow camera centred on the player
-    this.sun.position.set(focus.x + this.sunDir.x * 300, Math.max(20, this.sunDir.y * 300), focus.z + this.sunDir.z * 300);
-    this.sun.target.position.set(focus.x, 0, focus.z);
-    this.stars.position.set(focus.x, 0, focus.z);
+    const d = 350;
+    let tx = focus.x, tz = focus.z;
+    if (this.sun.castShadow) {
+      // snap the shadow camera to whole texels to stop shadow shimmer while driving
+      const texel = (this.sun.shadow.camera.right * 2) / this.sun.shadow.mapSize.x;
+      tx = Math.round(tx / texel) * texel;
+      tz = Math.round(tz / texel) * texel;
+    }
+    this.sun.position.set(tx + this.sunDir.x * d, Math.max(30, this.sunDir.y * d), tz + this.sunDir.z * d);
+    this.sun.target.position.set(tx, 0, tz);
     if (this.flare) this.flare.position.set(focus.x + this.sunDir.x * 8000, this.sunDir.y * 8000, focus.z + this.sunDir.z * 8000);
     if (!this.particles) return;
     if (this.particleCore) {
@@ -217,24 +328,21 @@ export class Environment {
       this.particles.geometry.attributes.position.needsUpdate = true;
       return;
     }
-    const d = this.particleData;
+    const data = this.particleData;
     const pos = this.particles.geometry.attributes.position.array;
-    const n = d.length / 3;
     const rain = this.particleKind === 'rain';
-    for (let i = 0; i < n; i++) {
-      let x = d[i * 3], y = d[i * 3 + 1], z = d[i * 3 + 2];
+    for (let i = 0; i < this.particleCount; i++) {
+      let x = data[i * 3], y = data[i * 3 + 1];
+      const z = data[i * 3 + 2];
       if (rain) y -= dt * 28;
-      else { y -= dt * 0.8; x += dt * (8 + wind); z += dt * 3 * Math.sin(i); }
+      else { y -= dt * 0.8; x += dt * (8 + wind); }
       if (y < 0) y += 40;
       if (x > 60) x -= 120;
-      d[i * 3] = x; d[i * 3 + 1] = y; d[i * 3 + 2] = z;
+      data[i * 3] = x;
+      data[i * 3 + 1] = y;
       const wx = focus.x + x, wz = focus.z + z;
-      if (rain) {
-        pos[i * 6] = wx; pos[i * 6 + 1] = y; pos[i * 6 + 2] = wz;
-        pos[i * 6 + 3] = wx + 0.1; pos[i * 6 + 4] = y + 0.9; pos[i * 6 + 5] = wz;
-      } else {
-        pos[i * 3] = wx; pos[i * 3 + 1] = y * 0.3; pos[i * 3 + 2] = wz;
-      }
+      if (rain) pos.set([wx, y, wz, wx + 0.1, y + 0.9, wz], i * 6);
+      else pos.set([wx, y * 0.3, wz], i * 3);
     }
     this.particles.geometry.attributes.position.needsUpdate = true;
   }

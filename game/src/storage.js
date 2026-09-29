@@ -28,7 +28,10 @@ const DEFAULT_PROFILE = {
   blackPoints: 0,
   stats: { km: 0, fines: 0, finesCount: 0, missions: 0, tests: 0, topSpeed: 0, playSeconds: 0 },
   disclaimerAccepted: false,
-  lastRegion: 'dubai-downtown',
+  signedInOnce: false,
+  tutorialDone: false,
+  lastCity: 'downtown',
+  lastDaily: '',
   settings: { ...DEFAULT_SETTINGS },
 };
 

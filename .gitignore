@@ -10,3 +10,6 @@ android/.idea/
 *.apk
 *.keystore
 .DS_Store
+game/public/world/
+game/public/art/
+physics/target/

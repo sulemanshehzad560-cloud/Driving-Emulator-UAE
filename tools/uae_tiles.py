@@ -88,6 +88,21 @@ def tile_of(x, y):
 
 # ----------------------------------------------------------------- reading
 
+EMIRATE_KEYS = [('abu dhabi', 'Abu Dhabi'), ('dubai', 'Dubai'), ('sharjah', 'Sharjah'), ('ajman', 'Ajman'),
+                ('umm', 'Umm Al Quwain'), ('ras', 'Ras Al Khaimah'), ('fujair', 'Fujairah')]
+
+
+def emirate_name(raw):
+    """Canonical English name of one of the seven emirates ('' for anything else, e.g. Oman's governorates)."""
+    low = raw.lower().replace('-', ' ')
+    if 'governorate' in low:
+        return ''
+    for key, name in EMIRATE_KEYS:
+        if key in low:
+            return name
+    return ''
+
+
 class Data:
     def __init__(self):
         self.roads = []  # (way_id, tags, [(node_id, x, y)])
@@ -214,8 +229,8 @@ def read(pbf, log):
                 if lvl == '2' and (t.get('ISO3166-1') == 'AE' or t.get('ISO3166-1:alpha2') == 'AE'):
                     d.country = unary_union(area_polygons(o))
                 elif lvl == '4' and o.from_way() is False:
-                    name = t.get('name:en') or t.get('name') or ''
-                    polys = area_polygons(o)
+                    name = emirate_name(t.get('name:en') or t.get('name') or '')
+                    polys = area_polygons(o) if name else None
                     if polys:
                         d.emirates.append((name, unary_union(polys)))
                 continue
@@ -637,6 +652,10 @@ def main():
     log = lambda m: print(m, flush=True)
     os.makedirs(args.out, exist_ok=True)
     d = read(args.pbf, log)
+    if d.country is None and d.emirates:
+        # national boundary missing from the extract: the seven emirates together are the country
+        d.country = unary_union([p for _, p in d.emirates]).buffer(0)
+        log('country outline rebuilt from the emirates')
     tiles, index, overview_ways, sea = build(d, args.out, log, args.keep_outside or d.country is None)
     write_overview(d, tiles, index, overview_ways, sea, args.out, log)
 

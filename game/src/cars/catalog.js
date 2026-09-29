@@ -19,6 +19,11 @@ export const CARS = [
     paints: [0x151515, 0xf4f4f4, 0x4e5a3a, 0x7d7f80, 0xc9b08a],
   },
   {
+    id: 'kaiser-g63', name: 'Kaiser G 63 Night Edition', brand: 'KAISER', cls: 'Performance 4x4', style: 'g63',
+    price: 9000, topSpeed: 240, accel: 4.5, handling: 0.64, braking: 0.76, grip: 0.8, mass: 2560,
+    paints: [0x0b0b0c, 0x2b2e31, 0xf2f2f2, 0x4a5a3c, 0x7a0f14],
+  },
+  {
     id: 'kaiser-gle', name: 'Kaiser GL Grand SUV', brand: 'KAISER', cls: 'Luxury SUV', style: 'suv',
     price: 5000, topSpeed: 240, accel: 5.4, handling: 0.66, braking: 0.76, grip: 0.78, mass: 2400,
     paints: [0x2f3439, 0xffffff, 0x0e1a2e, 0x8a1c1c, 0xa7a9ac],
@@ -46,12 +51,20 @@ export const CARS = [
 ];
 
 export const TRAFFIC_TYPES = [
-  { style: 'sedan', paints: [0xf1e3c2], taxi: true, weight: 4 }, // Dubai-style cream taxi
-  { style: 'sedan', paints: [0xffffff, 0xc0c0c0, 0x222222, 0x8c8c8c, 0x1b2a41, 0x7a0e0e], weight: 6 },
-  { style: 'suv', paints: [0xffffff, 0x1c1c1c, 0xb9bcc0, 0x4a4a4a, 0x6b5b45], weight: 5 },
-  { style: 'boxy', paints: [0xffffff, 0x151515], weight: 1 },
-  { style: 'van', paints: [0xffffff, 0xe6e6e6], weight: 2 },
-  { style: 'coupe', paints: [0xd4001a, 0x0c2a66, 0x101010], weight: 1 },
+  // Dubai taxis: cream body, roof colour varies by operator (red, pink = ladies' taxi, blue)
+  { style: 'sedan', paints: [0xf1e3c2], taxi: true, taxiRoof: 0xc8102e, weight: 3, region: 'dubai' },
+  { style: 'sedan', paints: [0xf1e3c2], taxi: true, taxiRoof: 0xe75480, weight: 0.7, region: 'dubai' },
+  { style: 'sedan', paints: [0xf1e3c2], taxi: true, taxiRoof: 0x1f5fbf, weight: 0.8, region: 'dubai' },
+  // Abu Dhabi taxis: silver with a yellow roof sign
+  { style: 'sedan', paints: [0xc7ccd1], taxi: true, taxiRoof: 0xf2c200, weight: 3, region: 'abudhabi' },
+  { style: 'sedan', paints: [0xffffff, 0xc0c0c0, 0x222222, 0x8c8c8c, 0x1b2a41, 0x7a0e0e, 0xe8e3d6], weight: 7 },
+  { style: 'suv', paints: [0xffffff, 0x1c1c1c, 0xb9bcc0, 0x4a4a4a, 0x6b5b45, 0x0e1a2e], weight: 6 },
+  { style: 'boxy', paints: [0xffffff, 0x151515, 0x4e5a3a], weight: 1 },
+  { style: 'g63', paints: [0x0b0b0c, 0xf2f2f2, 0x2b2e31], weight: 1 },
+  { style: 'pickup', paints: [0xffffff, 0xd9d9d9, 0x8a8a8a], weight: 2 },
+  { style: 'van', paints: [0xffffff, 0xe6e6e6, 0xf1e3c2], weight: 2 },
+  { style: 'coupe', paints: [0xd4001a, 0x0c2a66, 0x101010, 0xffd400], weight: 1 },
+  { style: 'bus', paints: [0xd6001c], weight: 0.6, big: true },
 ];
 
 export function carById(id) {

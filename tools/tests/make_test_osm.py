@@ -9,7 +9,7 @@ import sys
 from xml.sax.saxutils import quoteattr
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MAPS = os.path.join(HERE, '..', '..', 'game', 'public', 'maps')
+MAPS = os.path.join(HERE, 'fixtures', 'maps')
 out = sys.argv[1] if len(sys.argv) > 1 else 'test.osm'
 
 nid = [1_000_000]

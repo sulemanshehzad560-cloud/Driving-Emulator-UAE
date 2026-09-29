@@ -1,8 +1,8 @@
-// Speed cameras, toll gates (Salik in Dubai, Darb in Abu Dhabi) and rest
-// stops / fuel stations. Uses OpenStreetMap positions where mapped and fills
-// the gaps with rule-based placement so every map has them.
+// Speed cameras, Salik (Dubai) / Darb (Abu Dhabi) toll gantries and fuel
+// stations for the streamed world. OSM positions are used where mapped;
+// motorways without mapped radars get rule-based ones.
 import * as THREE from 'three';
-import { salikTexture, glowTexture } from '../render/textures.js';
+import { glowTexture } from '../render/textures.js';
 
 // UAE federal speeding fines (AED) by km/h over the limit.
 export function speedingFine(over) {
@@ -14,245 +14,244 @@ export function speedingFine(over) {
   return { aed: 300, points: 0 };
 }
 
-function snapToRoad(graph, x, z) {
-  const nr = graph.nearest(x, z, 60);
-  if (!nr) return null;
-  const l = Math.hypot(nr.dx, nr.dz) || 1;
-  return { road: nr.road, x: nr.px, z: nr.pz, dx: nr.dx / l, dz: nr.dz / l };
+export function tollSystem(emirate, X, Z) {
+  const e = (emirate || '').toLowerCase();
+  if (e.includes('abu dhabi') || e.includes('أبو ظبي')) return 'Darb';
+  if (e.includes('dubai') || e.includes('دبي')) return 'Salik';
+  // unknown emirate: west of Jebel Ali is Abu Dhabi
+  return X < 25000 ? 'Darb' : 'Salik';
 }
 
-function textSprite(text, bg, fg = '#fff') {
+const BRANDS = {
+  ENOC: { canopy: 0xffffff, stripe: 0x00539b, label: '#00539b' },
+  ADNOC: { canopy: 0xffffff, stripe: 0x0060a9, label: '#0060a9' },
+  EMARAT: { canopy: 0xffffff, stripe: 0xd71920, label: '#d71920' },
+  EPPCO: { canopy: 0xffffff, stripe: 0xf39200, label: '#f39200' },
+};
+
+function label(text, bg) {
   const c = document.createElement('canvas');
   c.width = 256;
   c.height = 64;
   const ctx = c.getContext('2d');
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, 256, 64);
-  ctx.fillStyle = fg;
-  ctx.font = 'bold 30px Arial, sans-serif';
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 30px Arial';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(text, 128, 34);
+  ctx.fillText(text.slice(0, 16), 128, 34);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
 
 export class Enforcement {
-  constructor(graph, world) {
+  constructor(scene, graph) {
+    this.scene = scene;
     this.graph = graph;
-    this.world = world;
-    this.group = new THREE.Group();
+    this.byTile = new Map();
     this.cameras = [];
     this.tolls = [];
     this.rest = [];
-    const map = graph.map;
-    const emirate = (map.emirate || '').toLowerCase();
-    this.tollName = emirate.includes('abu dhabi') ? 'Darb' : emirate.includes('dubai') ? 'Salik' : null;
-
-    // --- speed cameras ---
-    for (const [x, y] of map.cameras || []) {
-      const s = snapToRoad(graph, x, -y);
-      if (s) this.cameras.push(s);
-    }
-    if (this.cameras.length < 3) this.autoCameras();
-
-    // --- toll gates ---
-    for (const t of map.tolls || []) {
-      const s = snapToRoad(graph, t.x, -t.y);
-      if (s) this.tolls.push({ ...s, name: t.name || this.tollName || 'Toll' });
-    }
-    if (!this.tolls.length && this.tollName) this.autoTolls();
-
-    // --- rest areas / fuel ---
-    for (const r of map.rest || []) this.rest.push({ x: r.x, z: -r.y, kind: r.kind, name: r.name || (r.kind === 'fuel' ? 'Fuel station' : 'Rest area') });
-    if (this.rest.length < 2) this.autoRest();
-
-    this.buildMeshes();
+    this.mats = {
+      pole: new THREE.MeshStandardMaterial({ color: 0xd8dde2, metalness: 0.5, roughness: 0.4 }),
+      box: new THREE.MeshStandardMaterial({ color: 0x2a2f36, metalness: 0.3, roughness: 0.5 }),
+      gantry: new THREE.MeshStandardMaterial({ color: 0xc4cad0, metalness: 0.7, roughness: 0.3 }),
+      tollSign: {
+        Salik: new THREE.MeshStandardMaterial({ map: label('SALIK  سالك', '#e4002b'), emissive: 0x221111 }),
+        Darb: new THREE.MeshStandardMaterial({ map: label('DARB  درب', '#7a1f2b'), emissive: 0x220a0a }),
+      },
+      pad: new THREE.MeshStandardMaterial({ color: 0x6f6f6f, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }),
+      pump: new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.4 }),
+      column: new THREE.MeshStandardMaterial({ color: 0xd0d4d8, metalness: 0.6, roughness: 0.3 }),
+      glow: new THREE.SpriteMaterial({ map: glowTexture(), color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }),
+    };
   }
 
-  autoCameras() {
-    const g = this.graph;
-    let acc = 300;
-    for (const road of g.roads) {
-      if (road.maxspeed < 60 || road.rank < 5) continue;
-      for (let i = 1; i < road.n.length; i++) {
-        const a = g.pts[road.n[i - 1]], b = g.pts[road.n[i]];
-        const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-        acc += len;
-        if (acc > 700 && len > 60) {
-          acc = 0;
-          const dx = (b[0] - a[0]) / len, dz = (b[1] - a[1]) / len;
-          this.cameras.push({ road, x: a[0] + dx * len * 0.5, z: a[1] + dz * len * 0.5, dx, dz });
-        }
+  snap(x, z) {
+    const nr = this.graph.nearest(x, z, 60);
+    if (!nr) return null;
+    const l = Math.hypot(nr.dx, nr.dz) || 1;
+    return { road: nr.road, x: nr.px, z: nr.pz, dx: nr.dx / l, dz: nr.dz / l };
+  }
+
+  addTile(tile) {
+    const d = tile.data;
+    const [ox, oy] = d.origin;
+    const group = new THREE.Group();
+    const rec = { group, cameras: [], tolls: [], rest: [] };
+    const toll = tollSystem(d.emirate, ox + 500, -(oy + 500));
+
+    for (const [x, y, ms] of d.cameras || []) {
+      const s = this.snap(ox + x, -(oy + y));
+      if (s) rec.cameras.push({ ...s, limit: ms || s.road.maxspeed });
+    }
+    if (!rec.cameras.length) {
+      // rule-based radars on fast roads (about one per 1.5 km of motorway)
+      for (const road of this.graph.tiles.get(tile.key)?.roads || []) {
+        if (road.rank < 7 || road.ids.length < 2) continue;
+        const h = Math.abs((road.w * 2654435761) % 1000) / 1000;
+        if (h > (road.rank >= 8 ? 0.45 : 0.2)) continue;
+        const a = this.graph.pt(road.ids[0]), b = this.graph.pt(road.ids[road.ids.length - 1]);
+        if (!a || !b) continue;
+        const len = Math.hypot(b.x - a.x, b.z - a.z);
+        if (len < 120) continue;
+        const dx = (b.x - a.x) / len, dz = (b.z - a.z) / len;
+        rec.cameras.push({ road, x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, dx, dz, limit: road.maxspeed });
       }
     }
-  }
-
-  autoTolls() {
-    const g = this.graph;
-    const candidates = g.roads.filter((r) => r.type === 'motorway' || r.type === 'trunk');
-    const placed = [];
-    for (const road of candidates) {
-      let total = 0;
-      const segs = [];
-      for (let i = 1; i < road.n.length; i++) {
-        const a = g.pts[road.n[i - 1]], b = g.pts[road.n[i]];
-        const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-        segs.push([a, b, len]);
-        total += len;
-      }
-      if (total < 400) continue;
-      let s = total / 2;
-      for (const [a, b, len] of segs) {
-        if (s <= len) {
-          const dx = (b[0] - a[0]) / len, dz = (b[1] - a[1]) / len;
-          const x = a[0] + dx * s, z = a[1] + dz * s;
-          if (!placed.some((p) => Math.hypot(p[0] - x, p[1] - z) < 600)) {
-            placed.push([x, z]);
-            this.tolls.push({ road, x, z, dx, dz, name: `${this.tollName} Gate` });
-          }
-          break;
-        }
-        s -= len;
-      }
-      if (this.tolls.length >= 4) break;
+    for (const t of d.tolls || []) {
+      const s = this.snap(ox + t.x, -(oy + t.y));
+      if (s) rec.tolls.push({ ...s, name: /darb/i.test(t.name) ? 'Darb' : /salik/i.test(t.name) ? 'Salik' : toll });
     }
-  }
-
-  autoRest() {
-    const g = this.graph;
-    const roads = g.roads.filter((r) => r.rank >= 6).sort((a, b) => b.n.length - a.n.length);
-    for (const road of roads.slice(0, 4)) {
-      const k = Math.floor(road.n.length / 2);
-      const a = g.pts[road.n[Math.max(0, k - 1)]], b = g.pts[road.n[k]];
-      const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-      const dx = (b[0] - a[0]) / len, dz = (b[1] - a[1]) / len;
-      const off = road.width / 2 + 14;
-      const x = (a[0] + b[0]) / 2 - dz * off, z = (a[1] + b[1]) / 2 + dx * off;
-      if (this.world.pointInBuilding(x, z)) continue;
-      this.rest.push({ x, z, kind: 'fuel', name: ['ENOC', 'ADNOC', 'Emarat'][this.rest.length % 3] + ' Station' });
+    for (const r of d.rest || []) {
+      const brand = Object.keys(BRANDS).find((b) => (r.name || '').toUpperCase().includes(b)) || (toll === 'Darb' ? 'ADNOC' : 'ENOC');
+      rec.rest.push({ x: ox + r.x, z: -(oy + r.y), kind: r.kind, brand, name: r.name || `${brand} Station` });
     }
+    this.buildMeshes(rec);
+    this.scene.add(group);
+    this.byTile.set(tile.key, rec);
+    this.cameras.push(...rec.cameras);
+    this.tolls.push(...rec.tolls);
+    this.rest.push(...rec.rest);
   }
 
-  buildMeshes() {
-    const poleMat = new THREE.MeshStandardMaterial({ color: 0xd8dde2, metalness: 0.5, roughness: 0.4 });
-    const boxMat = new THREE.MeshStandardMaterial({ color: 0x2a2f36, metalness: 0.3, roughness: 0.5 });
-    const lensMat = new THREE.MeshBasicMaterial({ color: 0x222222 });
-    this.flashes = [];
-    for (const c of this.cameras) {
+  removeTile(tile) {
+    const rec = this.byTile.get(tile.key);
+    if (!rec) return;
+    this.scene.remove(rec.group);
+    const drop = (list, items) => {
+      const s = new Set(items);
+      return list.filter((x) => !s.has(x));
+    };
+    this.cameras = drop(this.cameras, rec.cameras);
+    this.tolls = drop(this.tolls, rec.tolls);
+    this.rest = drop(this.rest, rec.rest);
+    this.byTile.delete(tile.key);
+  }
+
+  buildMeshes(rec) {
+    const M = this.mats;
+    const g = rec.group;
+    for (const c of rec.cameras) {
       const rx = -c.dz, rz = c.dx;
-      const off = c.road.width / 2 + 1.6;
-      const g = new THREE.Group();
-      g.position.set(c.x + rx * off, 0, c.z + rz * off);
-      g.rotation.y = Math.atan2(-c.dx, -c.dz);
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.15, 4.2, 8), poleMat);
-      pole.position.y = 2.1;
-      const box = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.7, 0.8), boxMat);
-      box.position.set(0, 4.4, 0);
-      const lens = new THREE.Mesh(new THREE.CircleGeometry(0.14, 12), lensMat);
-      lens.position.set(0, 4.45, 0.41);
-      const flash = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }));
-      flash.scale.set(4, 4, 1);
-      flash.position.set(0, 4.4, 0.6);
-      g.add(pole, box, lens, flash);
+      const off = c.road.width / 2 + 1.8;
+      const o = new THREE.Group();
+      o.position.set(c.x + rx * off, 0, c.z + rz * off);
+      o.rotation.y = Math.atan2(-c.dx, -c.dz);
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 4.6, 10), M.pole);
+      pole.position.y = 2.3;
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.8, 1), M.box);
+      box.position.y = 4.9;
+      const flash = new THREE.Sprite(M.glow.clone());
+      flash.scale.set(5, 5, 1);
+      flash.position.set(0, 4.9, 0.7);
+      o.add(pole, box, flash);
       c.flash = flash;
-      this.group.add(g);
+      g.add(o);
     }
-
-    const gantryMat = new THREE.MeshStandardMaterial({ color: 0xbfc5cc, metalness: 0.6, roughness: 0.35 });
-    for (const t of this.tolls) {
+    for (const t of rec.tolls) {
       const hw = t.road.width / 2 + 1.5;
-      const g = new THREE.Group();
-      g.position.set(t.x, 0, t.z);
-      g.rotation.y = Math.atan2(-t.dx, -t.dz);
+      const o = new THREE.Group();
+      o.position.set(t.x, 0, t.z);
+      o.rotation.y = Math.atan2(-t.dx, -t.dz);
       for (const s of [-1, 1]) {
-        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.4, 7, 0.4), gantryMat);
-        leg.position.set(s * hw, 3.5, 0);
-        g.add(leg);
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.5, 7.4, 0.5), M.gantry);
+        leg.position.set(s * hw, 3.7, 0);
+        o.add(leg);
       }
-      const beam = new THREE.Mesh(new THREE.BoxGeometry(hw * 2 + 0.4, 0.8, 0.6), gantryMat);
-      beam.position.y = 6.8;
-      g.add(beam);
-      const sign = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(hw * 1.6, 12), 1.4), new THREE.MeshStandardMaterial({ map: this.tollName === 'Darb' ? textSprite('DARB  •  درب', '#7a1f2b') : salikTexture(), emissive: 0x222222 }));
-      sign.position.set(0, 6.8, 0.32);
-      g.add(sign);
-      this.group.add(g);
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(hw * 2 + 0.5, 1, 0.8), M.gantry);
+      beam.position.y = 7.2;
+      o.add(beam);
+      for (let k = -1; k <= 1; k++) {
+        const cam = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.5), M.box);
+        cam.position.set(k * hw * 0.6, 6.5, 0.3);
+        o.add(cam);
+      }
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(Math.min(hw * 1.5, 10), 1.3), M.tollSign[t.name] || M.tollSign.Salik);
+      sign.position.set(0, 7.2, 0.42);
+      o.add(sign);
+      g.add(o);
     }
-
-    const canopyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4, emissive: 0xffffff, emissiveIntensity: 0.05 });
-    const pumpMat = new THREE.MeshStandardMaterial({ color: 0x0f6bb3, roughness: 0.5 });
-    for (const r of this.rest) {
-      const g = new THREE.Group();
-      g.position.set(r.x, 0, r.z);
-      const pad = new THREE.Mesh(new THREE.PlaneGeometry(26, 20), new THREE.MeshStandardMaterial({ color: 0x777777, roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -1 }));
+    for (const r of rec.rest) {
+      if (r.kind !== 'fuel') continue;
+      const b = BRANDS[r.brand] || BRANDS.ENOC;
+      const o = new THREE.Group();
+      o.position.set(r.x, 0, r.z);
+      const pad = new THREE.Mesh(new THREE.PlaneGeometry(30, 22), M.pad);
       pad.rotation.x = -Math.PI / 2;
-      pad.position.y = 0.03;
-      g.add(pad);
-      if (r.kind === 'fuel') {
-        const canopy = new THREE.Mesh(new THREE.BoxGeometry(18, 0.8, 12), canopyMat);
-        canopy.position.y = 5.2;
-        g.add(canopy);
-        for (const [px, pz] of [[-6, -3], [6, -3], [-6, 3], [6, 3]]) {
-          const col = new THREE.Mesh(new THREE.BoxGeometry(0.4, 5, 0.4), poleMat);
-          col.position.set(px, 2.5, pz);
-          g.add(col);
-        }
-        for (const px of [-3, 3]) {
-          const pump = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.7, 0.5), pumpMat);
-          pump.position.set(px, 0.85, 0);
-          g.add(pump);
-        }
-      } else {
-        const hut = new THREE.Mesh(new THREE.BoxGeometry(10, 3.5, 6), new THREE.MeshStandardMaterial({ color: 0xe8dcc4 }));
-        hut.position.y = 1.75;
-        g.add(hut);
+      pad.position.y = 0.04;
+      o.add(pad);
+      const canopy = new THREE.Mesh(new THREE.BoxGeometry(20, 1, 13), new THREE.MeshStandardMaterial({ color: b.canopy, roughness: 0.4 }));
+      canopy.position.y = 5.6;
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(20.1, 0.35, 13.1), new THREE.MeshStandardMaterial({ color: b.stripe, emissive: b.stripe, emissiveIntensity: 0.3 }));
+      stripe.position.y = 5.4;
+      o.add(canopy, stripe);
+      for (const [px, pz] of [[-7, -4], [7, -4], [-7, 4], [7, 4]]) {
+        const col = new THREE.Mesh(new THREE.BoxGeometry(0.45, 5.2, 0.45), M.column);
+        col.position.set(px, 2.6, pz);
+        o.add(col);
       }
-      const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: textSprite(r.name.slice(0, 16), r.kind === 'fuel' ? '#0f6bb3' : '#2e7d32'), depthWrite: false }));
-      label.scale.set(8, 2, 1);
-      label.position.y = 8;
-      g.add(label);
-      r.mesh = g;
-      this.group.add(g);
+      for (const px of [-4, 0, 4]) {
+        const pump = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.8, 0.6), M.pump);
+        pump.position.set(px, 0.9, 0);
+        o.add(pump);
+      }
+      const shop = new THREE.Mesh(new THREE.BoxGeometry(12, 4, 7), new THREE.MeshStandardMaterial({ color: 0xf0ede6, roughness: 0.6 }));
+      shop.position.set(0, 2, -13);
+      o.add(shop);
+      const totem = new THREE.Mesh(new THREE.BoxGeometry(1.4, 7, 0.4), new THREE.MeshStandardMaterial({ map: label(r.brand, b.label), emissive: 0x111111 }));
+      totem.position.set(12, 3.5, 8);
+      o.add(totem);
+      r.mesh = o;
+      g.add(o);
     }
   }
 
-  /**
-   * Check the player each frame. Returns a list of events:
-   * {type:'camera', kmh, limit, fine} | {type:'toll', name, aed} | {type:'rest', rest}
-   */
-  update(dt, player, limit, now) {
+  /** Per-frame checks. Returns events: camera / toll. */
+  update(dt, player, now) {
     const events = [];
     const kmh = player.kmh;
+    const [fx, fz] = player.forward;
     for (const c of this.cameras) {
-      if (c.flash.material.opacity > 0) c.flash.material.opacity = Math.max(0, c.flash.material.opacity - dt * 3);
+      if (c.flash && c.flash.material.opacity > 0) c.flash.material.opacity = Math.max(0, c.flash.material.opacity - dt * 3);
       const dx = player.x - c.x, dz = player.z - c.z;
-      if (dx * dx + dz * dz > 22 * 22) continue;
+      if (dx * dx + dz * dz > 24 * 24) continue;
       const along = dx * c.dx + dz * c.dz;
-      const [fx, fz] = player.forward;
       if (Math.abs(along) > 4 || fx * c.dx + fz * c.dz < 0.5) continue;
       if (c.cooldown && now - c.cooldown < 20) continue;
-      const camLimit = c.road.maxspeed || limit;
-      // UAE radars commonly allow a 20 km/h buffer
-      if (kmh > camLimit + 20) {
+      if (kmh > c.limit + 20) {
         c.cooldown = now;
-        c.flash.material.opacity = 1;
-        events.push({ type: 'camera', kmh: Math.round(kmh), limit: camLimit, fine: speedingFine(kmh - camLimit) });
+        if (c.flash) c.flash.material.opacity = 1;
+        events.push({ type: 'camera', kmh: Math.round(kmh), limit: c.limit, fine: speedingFine(kmh - c.limit) });
       }
     }
     for (const t of this.tolls) {
       const dx = player.x - t.x, dz = player.z - t.z;
       if (dx * dx + dz * dz > 30 * 30) continue;
-      const along = dx * t.dx + dz * t.dz;
-      if (Math.abs(along) > 3) continue;
+      if (Math.abs(dx * t.dx + dz * t.dz) > 3) continue;
       if (t.cooldown && now - t.cooldown < 30) continue;
       t.cooldown = now;
-      events.push({ type: 'toll', name: this.tollName || t.name, aed: this.tollName === 'Darb' ? 4 : 5 });
+      events.push({ type: 'toll', name: t.name, aed: t.name === 'Darb' ? 4 : 5 });
     }
-    for (const r of this.rest) {
-      const d = Math.hypot(player.x - r.x, player.z - r.z);
-      r.near = d < 16 && kmh < 8;
-    }
+    for (const r of this.rest) r.near = Math.hypot(player.x - r.x, player.z - r.z) < 16 && kmh < 8;
     return events;
+  }
+
+  /** Nearest camera ahead within `range` metres (Waze-style warning). */
+  cameraAhead(player, range = 500) {
+    const [fx, fz] = player.forward;
+    let best = null, bd = range;
+    for (const c of this.cameras) {
+      const dx = c.x - player.x, dz = c.z - player.z;
+      const along = dx * fx + dz * fz;
+      if (along < 0 || along > bd) continue;
+      if (Math.abs(dx * -fz + dz * fx) > 25) continue;
+      if (c.dx * fx + c.dz * fz < 0.5) continue;
+      bd = along;
+      best = { cam: c, dist: along };
+    }
+    return best;
   }
 }

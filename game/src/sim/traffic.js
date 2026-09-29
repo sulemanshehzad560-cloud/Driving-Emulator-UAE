@@ -1,52 +1,71 @@
-// AI traffic: cars follow the directed road graph in their lane, keep a safe
-// gap, obey traffic lights and stop signs, and respawn around the player.
-import * as THREE from 'three';
-import { buildTrafficCar } from '../cars/carFactory.js';
+// AI traffic on the streamed road graph: cars follow lanes, keep a safe gap,
+// slow for bends, obey traffic lights and stop signs, and are recycled
+// around the player. Density follows the road class (busier on motorways).
+import { buildTrafficCar, styleDims } from '../cars/carFactory.js';
 import { TRAFFIC_TYPES } from '../cars/catalog.js';
-import { lanesPerDirection } from '../world/roadGraph.js';
+import { lanesPerDirection } from '../world/graph.js';
 
-function pickType() {
+function pickType(rand) {
   const total = TRAFFIC_TYPES.reduce((s, t) => s + t.weight, 0);
-  let r = Math.random() * total;
-  for (const t of TRAFFIC_TYPES) {
-    if ((r -= t.weight) <= 0) return t;
-  }
+  let r = rand * total;
+  for (const t of TRAFFIC_TYPES) if ((r -= t.weight) <= 0) return t;
   return TRAFFIC_TYPES[0];
 }
 
+export function regionAt(X) {
+  // west of the Ghantoot / Jebel Ali area is Abu Dhabi
+  return X < 15000 ? 'abudhabi' : 'dubai';
+}
+
 export class Traffic {
-  constructor(graph, signals, scene, count) {
+  constructor(graph, lights, scene, count) {
     this.graph = graph;
-    this.signals = signals;
+    this.lights = lights;
     this.scene = scene;
     this.cars = [];
     this.count = count;
     this.edgeCars = new Map();
-    this.spawnable = graph.edges.filter((e) => e.len > 20 && e.road.rank >= 3);
-    for (let i = 0; i < count; i++) {
-      const t = pickType();
-      const color = t.paints[Math.floor(Math.random() * t.paints.length)];
-      const mesh = buildTrafficCar(t.style, color, !!t.taxi);
+    const pool = Math.round(count * 1.4);
+    for (let i = 0; i < pool; i++) {
+      const t = pickType((i * 0.61803398875) % 1);
+      const color = t.paints[i % t.paints.length];
+      const mesh = buildTrafficCar(t.style, color, !!t.taxi, t.taxiRoof);
+      mesh.visible = false;
       scene.add(mesh);
-      this.cars.push({ mesh, style: t.style, len: t.style === 'van' ? 5.2 : 4.9, edge: null, s: 0, speed: 0, lane: 0, active: false, heading: 0, x: 0, z: 0 });
+      const dims = styleDims(t.style);
+      this.cars.push({ mesh, type: t, len: dims.L, edge: null, s: 0, speed: 0, lane: 0, active: false, heading: 0, x: 0, z: 0 });
     }
+    this.activeTarget = count;
   }
 
-  spawn(car, px, pz, minD, maxD) {
-    for (let tries = 0; tries < 30; tries++) {
-      const e = this.spawnable[Math.floor(Math.random() * this.spawnable.length)];
-      if (!e) return false;
-      const a = this.graph.pts[e.a];
-      const d = Math.hypot(a[0] - px, a[1] - pz);
+  activeCount() {
+    let n = 0;
+    for (const c of this.cars) if (c.active) n++;
+    return n;
+  }
+
+  spawn(car, px, pz, minD, maxD, region) {
+    if (car.type.region && car.type.region !== region) return false;
+    const edges = this.graph.liveEdges;
+    if (!edges.length) return false;
+    for (let tries = 0; tries < 25; tries++) {
+      const e = edges[Math.floor(Math.random() * edges.length)];
+      if (!e.alive || e.len < 20 || e.road.rank < 3) continue;
+      if (car.type.big && e.road.rank < 5) continue;
+      // busier big roads: reject minor roads more often
+      if (Math.random() > 0.25 + e.road.rank * 0.09) continue;
+      const a = this.graph.pt(e.a);
+      if (!a) continue;
+      const d = Math.hypot(a.x - px, a.z - pz);
       if (d < minD || d > maxD) continue;
       const s = Math.random() * e.len * 0.6 + 4;
       const list = this.edgeCars.get(e.id) || [];
-      if (list.some((o) => Math.abs(o.s - s) < 12)) continue;
+      if (list.some((o) => Math.abs(o.s - s) < 14)) continue;
       car.edge = e;
       car.s = s;
       car.lane = Math.floor(Math.random() * lanesPerDirection(e.road));
       car.speed = (e.road.maxspeed / 3.6) * 0.6;
-      car.cruise = 0.75 + Math.random() * 0.25;
+      car.cruise = (car.type.big ? 0.7 : 0.8) + Math.random() * 0.22;
       car.active = true;
       car.mesh.visible = true;
       car.next = this.chooseNext(e);
@@ -57,13 +76,13 @@ export class Traffic {
   }
 
   chooseNext(e) {
-    const outs = (this.graph.out.get(e.b) || []).filter((o) => o.b !== e.a);
-    if (!outs.length) return (this.graph.out.get(e.b) || [])[0] || null;
-    // weight towards going straight on bigger roads
+    const all = (this.graph.out.get(e.b) || []).filter((o) => o.alive);
+    const outs = all.filter((o) => o.b !== e.a);
+    if (!outs.length) return all[0] || null;
     let best = null, bw = -1;
     for (const o of outs) {
       const straight = o.dx * e.dx + o.dz * e.dz;
-      const w = Math.random() * (1 + Math.max(0, straight) * 2) * (o.road.rank >= 3 ? 1 : 0.2);
+      const w = Math.random() * (1 + Math.max(0, straight) * 2.5) * (o.road.rank >= 3 ? 1 : 0.15);
       if (w > bw) { bw = w; best = o; }
     }
     return best;
@@ -79,94 +98,100 @@ export class Traffic {
 
   position(car, blend) {
     const e = car.edge;
-    const a = this.graph.pts[e.a];
+    const a = this.graph.pt(e.a);
+    if (!a) return;
     const off = this.laneOffset(car, e);
-    const x = a[0] + e.dx * car.s - e.dz * off;
-    const z = a[1] + e.dz * car.s + e.dx * off;
+    const x = a.x + e.dx * car.s - e.dz * off;
+    const z = a.z + e.dz * car.s + e.dx * off;
     const heading = Math.atan2(-e.dx, -e.dz);
     let dh = heading - car.heading;
     dh = Math.atan2(Math.sin(dh), Math.cos(dh));
     car.heading += dh * blend;
-    // smooth lane/corner transitions
-    car.x += (x - car.x) * (blend >= 1 ? 1 : Math.min(1, blend * 1.5));
-    car.z += (z - car.z) * (blend >= 1 ? 1 : Math.min(1, blend * 1.5));
+    const k = blend >= 1 ? 1 : Math.min(1, blend * 1.5);
+    car.x += (x - car.x) * k;
+    car.z += (z - car.z) * k;
     car.mesh.position.set(car.x, 0, car.z);
     car.mesh.rotation.y = car.heading;
   }
 
-  update(dt, player, time) {
+  despawn(c) {
+    c.active = false;
+    c.mesh.visible = false;
+  }
+
+  update(dt, player) {
     const px = player.x, pz = player.z;
+    const region = regionAt(px);
     this.edgeCars.clear();
+    let active = 0;
     for (const c of this.cars) {
       if (!c.active) continue;
+      if (!c.edge.alive) {
+        this.despawn(c);
+        continue;
+      }
+      active++;
       if (!this.edgeCars.has(c.edge.id)) this.edgeCars.set(c.edge.id, []);
       this.edgeCars.get(c.edge.id).push(c);
     }
-    const [pfx, pfz] = player.forward;
-
+    let spawns = 2; // spread spawning over frames
     for (const c of this.cars) {
       if (!c.active) {
-        this.spawn(c, px, pz, 120, 380);
+        if (active < this.activeTarget && spawns > 0 && this.spawn(c, px, pz, 110, 420, region)) {
+          active++;
+          spawns--;
+        }
         continue;
       }
-      const dist = Math.hypot(c.x - px, c.z - pz);
-      if (dist > 480) {
-        c.active = false;
-        c.mesh.visible = false;
+      if (Math.hypot(c.x - px, c.z - pz) > 520) {
+        this.despawn(c);
         continue;
       }
       const e = c.edge;
       const limit = (e.road.maxspeed / 3.6) * c.cruise;
       let target = limit;
       const remain = e.len - c.s;
-
-      // traffic lights / stop signs at end of this edge
-      const ap = this.signals.stateFor(e.b, e.dx, e.dz);
+      const ap = this.lights.stateFor(e.b, e.dx, e.dz);
       if (ap && ap.state !== 'green') {
-        const a0 = this.graph.pts[e.a];
-        const sLine = (ap.x - a0[0]) * e.dx + (ap.z - a0[1]) * e.dz;
-        const stopDist = sLine - c.s - 3;
-        // amber: stop only if we comfortably can; red: always stop before the line
+        const a0 = this.graph.pt(e.a);
+        const sLine = (ap.x - a0.x) * e.dx + (ap.z - a0.z) * e.dz;
+        const stopDist = sLine - c.s - c.len / 2 - 0.5;
         const comfortable = (c.speed * c.speed) / (2 * 4.5) < stopDist;
         if (stopDist > -1 && (ap.state === 'red' || comfortable)) target = Math.min(target, Math.sqrt(2 * 4 * Math.max(0, stopDist)));
       }
       if (c.next) {
         const turn = c.next.dx * e.dx + c.next.dz * e.dz;
-        if (turn < 0.8 && remain < 40) target = Math.min(target, 4 + Math.max(0, turn) * 8 + remain * 0.25);
+        if (turn < 0.85 && remain < 45) target = Math.min(target, 4 + Math.max(0, turn) * 9 + remain * 0.25);
       }
-
-      // car ahead (same edge, same lane; or on next edge)
       let gap = Infinity;
       for (const o of this.edgeCars.get(e.id) || []) {
         if (o === c || o.lane !== c.lane) continue;
         const d = o.s - c.s;
-        if (d > 0 && d < gap) gap = d - o.len;
+        if (d > 0 && d < gap) gap = d - (o.len + c.len) / 2;
       }
-      if (c.next && remain < 40) {
+      if (c.next && remain < 45) {
         for (const o of this.edgeCars.get(c.next.id) || []) {
           const d = remain + o.s;
-          if (d < gap) gap = d - o.len;
+          if (d < gap) gap = d - (o.len + c.len) / 2;
         }
       }
-      // player ahead
+      // yield to the player
       const tx = px - c.x, tz = pz - c.z;
       const hx = -Math.sin(c.heading), hz = -Math.cos(c.heading);
       const ahead = tx * hx + tz * hz;
       const side = Math.abs(tx * -hz + tz * hx);
-      if (ahead > 0 && ahead < 40 && side < 2.6) gap = Math.min(gap, ahead - player.length);
-      if (gap < Infinity) target = Math.min(target, Math.max(0, (gap - 3) * 0.9));
+      if (ahead > 0 && ahead < 45 && side < 2.6) gap = Math.min(gap, ahead - (player.length + c.len) / 2);
+      if (gap < Infinity) target = Math.min(target, Math.max(0, (gap - 2.5) * 0.9));
 
-      if (target > c.speed) c.speed = Math.min(target, c.speed + 2.6 * dt);
+      if (target > c.speed) c.speed = Math.min(target, c.speed + (c.type.big ? 1.4 : 2.6) * dt);
       else c.speed = Math.max(target, c.speed - (gap < 8 ? 12 : 7) * dt);
-      if (c.speed < 0) c.speed = 0;
       c.s += c.speed * dt;
       c.braking = target < c.speed - 0.5;
 
-      while (c.s > c.edge.len) {
+      while (c.active && c.s > c.edge.len) {
         c.s -= c.edge.len;
-        if (!c.next) {
-          c.active = false;
-          c.mesh.visible = false;
+        if (!c.next || !c.next.alive) {
+          this.despawn(c);
           break;
         }
         c.edge = c.next;
@@ -177,24 +202,27 @@ export class Traffic {
     }
   }
 
-  /** Player collision: returns {nx, nz, impact} for the first hit or null. */
+  /** Player collision: returns {nx, nz, car} or null. */
   collide(player) {
-    const R = 1.9;
     const [fx, fz] = player.forward;
     const pts = [[player.x + fx * 1.3, player.z + fz * 1.3], [player.x - fx * 1.3, player.z - fz * 1.3]];
     for (const c of this.cars) {
       if (!c.active) continue;
+      if (Math.abs(c.x - player.x) > 12 || Math.abs(c.z - player.z) > 12) continue;
       const hx = -Math.sin(c.heading), hz = -Math.cos(c.heading);
-      const cps = [[c.x + hx * 1.3, c.z + hz * 1.3], [c.x - hx * 1.3, c.z - hz * 1.3]];
+      const half = c.len / 2 - 1;
+      const n = Math.max(2, Math.ceil(c.len / 2.6));
       for (const p of pts) {
-        for (const q of cps) {
-          const dx = p[0] - q[0], dz = p[1] - q[1];
+        for (let k = 0; k < n; k++) {
+          const f = -half + (2 * half * k) / (n - 1);
+          const qx = c.x + hx * f, qz = c.z + hz * f;
+          const dx = p[0] - qx, dz = p[1] - qz;
           const d = Math.hypot(dx, dz);
+          const R = c.type.big ? 2.3 : 1.9;
           if (d < R && d > 1e-3) {
             const nx = dx / d, nz = dz / d;
-            const push = R - d;
-            player.x += nx * push;
-            player.z += nz * push;
+            player.x += nx * (R - d);
+            player.z += nz * (R - d);
             c.speed *= 0.5;
             return { nx, nz, car: c };
           }

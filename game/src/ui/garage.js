@@ -1,69 +1,102 @@
-// 3D showroom behind the menus: the selected car on a turntable under
-// studio lights with a glossy floor and the Dubai skyline silhouette.
+// 3D showroom behind the menus: the car on a glowing turntable in a warm,
+// colourful studio (sunset backdrop, teal and amber accent lights).
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { buildCar } from '../cars/carFactory.js';
+
+function backdropTexture() {
+  const c = document.createElement('canvas');
+  c.width = 16;
+  c.height = 512;
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, 0, 512);
+  g.addColorStop(0, '#1a1340');
+  g.addColorStop(0.45, '#4a1f5c');
+  g.addColorStop(0.7, '#b8456b');
+  g.addColorStop(0.86, '#f08a4b');
+  g.addColorStop(1, '#2a1a2a');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 16, 512);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
 
 export class Garage {
   constructor(renderer) {
     this.renderer = renderer;
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x07090d);
-    this.scene.fog = new THREE.Fog(0x07090d, 18, 60);
+    this.scene.background = backdropTexture();
     const pmrem = new THREE.PMREMGenerator(renderer);
     this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.9;
-    this.camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 200);
-    this.angle = 0.6;
+    this.scene.environmentIntensity = 0.85;
+    this.camera = new THREE.PerspectiveCamera(36, innerWidth / innerHeight, 0.1, 300);
+    this.angle = 0.7;
+    this.mode = 'home';
+    this.previewId = null;
 
-    const floor = new THREE.Mesh(
-      new THREE.CircleGeometry(40, 64),
-      new THREE.MeshStandardMaterial({ color: 0x050608, metalness: 0.3, roughness: 0.32 }),
-    );
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(60, 96), new THREE.MeshStandardMaterial({ color: 0x1a1022, metalness: 0.4, roughness: 0.28 }));
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     this.scene.add(floor);
-    const ring = new THREE.Mesh(new THREE.RingGeometry(3.6, 3.75, 96), new THREE.MeshBasicMaterial({ color: 0xd4af37 }));
+    const ring = new THREE.Mesh(new THREE.RingGeometry(3.7, 3.9, 128), new THREE.MeshBasicMaterial({ color: 0xffb347, toneMapped: false }));
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.012;
     this.scene.add(ring);
-    this.turntable = new THREE.Mesh(new THREE.CylinderGeometry(3.55, 3.6, 0.1, 96), new THREE.MeshStandardMaterial({ color: 0x15181e, metalness: 0.8, roughness: 0.25 }));
+    this.ring = ring;
+    const ring2 = new THREE.Mesh(new THREE.RingGeometry(4.3, 4.36, 128), new THREE.MeshBasicMaterial({ color: 0x40e0d0, toneMapped: false, transparent: true, opacity: 0.7 }));
+    ring2.rotation.x = -Math.PI / 2;
+    ring2.position.y = 0.012;
+    this.scene.add(ring2);
+    this.turntable = new THREE.Mesh(new THREE.CylinderGeometry(3.65, 3.7, 0.1, 96), new THREE.MeshStandardMaterial({ color: 0x241a2e, metalness: 0.8, roughness: 0.22 }));
     this.turntable.position.y = 0.05;
     this.turntable.receiveShadow = true;
     this.scene.add(this.turntable);
 
-    // skyline silhouette
+    // city skyline silhouette around the studio
     const sky = new THREE.Group();
-    const mat = new THREE.MeshBasicMaterial({ color: 0x131a26 });
-    const winMat = new THREE.MeshBasicMaterial({ color: 0x3a3020 });
-    for (let i = 0; i < 40; i++) {
-      const a = (i / 40) * Math.PI * 2;
-      const h = 4 + Math.random() * 14 + (i === 7 ? 22 : 0);
-      const b = new THREE.Mesh(new THREE.BoxGeometry(2 + Math.random() * 2, h, 2), i % 5 === 0 ? winMat : mat);
-      b.position.set(Math.cos(a) * 45, h / 2, Math.sin(a) * 45);
+    const mat = new THREE.MeshBasicMaterial({ color: 0x241634, fog: false });
+    const lit = new THREE.MeshBasicMaterial({ color: 0xffb870, fog: false });
+    for (let i = 0; i < 64; i++) {
+      const a = (i / 64) * Math.PI * 2;
+      const h = 6 + ((i * 37) % 17) + (i % 9 === 0 ? 24 : 0);
+      const b = new THREE.Mesh(new THREE.BoxGeometry(3 + (i % 3), h, 3), mat);
+      b.position.set(Math.cos(a) * 70, h / 2, Math.sin(a) * 70);
       b.lookAt(0, h / 2, 0);
       sky.add(b);
+      if (i % 4 === 0) {
+        const w = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.1), lit);
+        w.position.set(b.position.x * 0.98, h * 0.6, b.position.z * 0.98);
+        sky.add(w);
+      }
     }
     this.scene.add(sky);
 
-    const key = new THREE.SpotLight(0xffffff, 400, 30, 0.6, 0.5, 1.5);
-    key.position.set(4, 9, 5);
+    const key = new THREE.SpotLight(0xfff1e0, 500, 40, 0.6, 0.5, 1.5);
+    key.position.set(5, 10, 6);
     key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
     this.scene.add(key);
-    const rim = new THREE.SpotLight(0xd4af37, 250, 30, 0.7, 0.6, 1.5);
-    rim.position.set(-6, 5, -6);
-    this.scene.add(rim);
-    this.scene.add(new THREE.HemisphereLight(0x8899bb, 0x111111, 0.4));
+    const teal = new THREE.SpotLight(0x40e0d0, 300, 40, 0.8, 0.6, 1.5);
+    teal.position.set(-8, 5, -4);
+    this.scene.add(teal);
+    const amber = new THREE.SpotLight(0xff8c42, 260, 40, 0.8, 0.6, 1.5);
+    amber.position.set(7, 4, -7);
+    this.scene.add(amber);
+    this.scene.add(new THREE.HemisphereLight(0xb9a0ff, 0x221133, 0.5));
     this.car = null;
   }
 
+  setMode(m) {
+    this.mode = m;
+  }
+
   show(style, color) {
-    if (this.car) {
-      this.turntable.remove(this.car);
-      this.car.traverse((o) => o.geometry && o.geometry.dispose());
-    }
+    const key = `${style}-${color}`;
+    if (this.car && this.carKey === key) return;
+    if (this.car) this.turntable.remove(this.car);
     this.car = buildCar({ style, color, detail: true, quality: 'high' });
+    this.carKey = key;
     this.car.position.y = 0.05;
     this.car.userData.headMat.emissiveIntensity = 2.5;
     this.car.userData.brakeMat.emissiveIntensity = 1.2;
@@ -76,18 +109,24 @@ export class Garage {
   }
 
   update(dt) {
-    this.turntable.rotation.y += dt * 0.25;
+    this.turntable.rotation.y += dt * (this.mode === 'showroom' ? 0.18 : 0.25);
     this.angle += dt * 0.02;
-    const r = innerWidth < innerHeight ? 13 : 11;
-    const cx = Math.cos(this.angle) * r, cz = Math.sin(this.angle) * r;
-    this.camera.position.set(cx, 3, cz);
-    // keep the car in the right-hand part of the screen, clear of the menu
-    const shift = innerWidth > innerHeight * 1.3 ? 3.2 : 0;
-    // camera right vector is (sin a, 0, -cos a); look left of the car so it sits right of centre
-    this.camera.lookAt(-Math.sin(this.angle) * shift, 0.7, Math.cos(this.angle) * shift);
+    this.ring.material.color.setHSL(0.08 + Math.sin(performance.now() / 2000) * 0.02, 1, 0.6);
+    const portrait = innerWidth < innerHeight;
+    const showroom = this.mode === 'showroom';
+    const r = portrait ? 14 : showroom ? 10 : 11.5;
+    this.camera.position.set(Math.cos(this.angle) * r, showroom ? 2.4 : 3, Math.sin(this.angle) * r);
+    // home: car sits right of centre (menu on the left); showroom: slightly left (info on the right)
+    const shift = portrait ? 0 : showroom ? -1.8 : 3.0;
+    this.camera.lookAt(-Math.sin(this.angle) * shift, 0.8, Math.cos(this.angle) * shift);
   }
 
   render() {
+    if (this.mode === 'hidden') {
+      this.renderer.setClearColor(0x0b1020);
+      this.renderer.clear();
+      return;
+    }
     this.renderer.render(this.scene, this.camera);
   }
 }

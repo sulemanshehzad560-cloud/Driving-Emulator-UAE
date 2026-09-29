@@ -14,7 +14,7 @@ curl -fL --retry 5 --retry-delay 10 -o "$WORK/src.osm.pbf" "$SRC_URL"
 ls -la "$WORK/src.osm.pbf"
 
 echo "Cutting the UAE bounding box"
-osmium extract --bbox "$BBOX" --strategy smart --overwrite -o "$WORK/uae.osm.pbf" "$WORK/src.osm.pbf"
+osmium extract --bbox "$BBOX" --strategy smart -S types=multipolygon,boundary --overwrite -o "$WORK/uae.osm.pbf" "$WORK/src.osm.pbf"
 rm -f "$WORK/src.osm.pbf"
 
 echo "Keeping only what the game needs"
