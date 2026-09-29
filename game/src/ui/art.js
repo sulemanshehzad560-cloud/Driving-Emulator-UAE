@@ -171,6 +171,22 @@ export function drawUaeMap(cv, overview, cities, selectedId) {
   });
   ctx.font = '600 11px system-ui, sans-serif';
   ctx.textAlign = 'left';
+  // labels: selected first, then the rest, skipping any that would collide
+  const placed = [];
+  const order = [...pins].sort((p, q) => (q.c.id === selectedId) - (p.c.id === selectedId));
+  const labelOf = new Map();
+  for (const p of order) {
+    const tw = ctx.measureText(p.c.name).width + 8;
+    const cands = [[p.a + 10, p.b - 8], [p.a - 10 - tw, p.b - 8], [p.a - tw / 2, p.b - 24], [p.a - tw / 2, p.b + 9]];
+    for (const [x, y] of cands) {
+      const r = [x, y, x + tw, y + 16];
+      if (x < 2 || x + tw > W - 2) continue;
+      if (placed.some((q) => r[0] < q[2] && r[2] > q[0] && r[1] < q[3] && r[3] > q[1])) continue;
+      placed.push(r);
+      labelOf.set(p.c.id, r);
+      break;
+    }
+  }
   for (const { c, a, b } of pins) {
     const sel = c.id === selectedId;
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
@@ -184,12 +200,12 @@ export function drawUaeMap(cv, overview, cities, selectedId) {
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = sel ? 3 : 2;
     ctx.stroke();
-    if (sel || s > 0.0006) {
-      ctx.fillStyle = 'rgba(20,20,30,0.85)';
-      const tw = ctx.measureText(c.name).width;
-      ctx.fillRect(a + 10, b - 8, tw + 8, 16);
-      ctx.fillStyle = '#fff';
-      ctx.fillText(c.name, a + 14, b + 4);
+    const r = labelOf.get(c.id);
+    if (r) {
+      ctx.fillStyle = sel ? c.color : 'rgba(20,20,30,0.85)';
+      ctx.fillRect(r[0], r[1], r[2] - r[0], 16);
+      ctx.fillStyle = sel ? '#111' : '#fff';
+      ctx.fillText(c.name, r[0] + 4, r[1] + 12);
     }
   }
   return {
