@@ -31,7 +31,7 @@ export class Traffic {
       const t = pickType((i * 0.61803398875) % 1);
       const color = t.paints[i % t.paints.length];
       const tpl = t.model && templates.get(t.model);
-      const mesh = tpl ? modelTrafficCar(tpl, t.paintMat, color) : buildTrafficCar(t.style, color, !!t.taxi, t.taxiRoof);
+      const mesh = tpl ? modelTrafficCar(tpl, t, color) : buildTrafficCar(t.style, color, !!t.taxi, t.taxiRoof);
       mesh.visible = false;
       scene.add(mesh);
       const dims = styleDims(t.style);

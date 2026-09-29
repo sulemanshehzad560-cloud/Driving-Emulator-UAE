@@ -1,0 +1,164 @@
+/* =====================================================================
+   UAE Drive — high-tech theme
+   Deep navy glass, cyan light accents, angled HUD panels, Rajdhani UI type
+   and Orbitron numerals. Loaded after style.css and overrides it.
+   ===================================================================== */
+:root {
+  --ink: #05070d;
+  --ink2: #0a1020;
+  --glass: rgba(8, 14, 28, 0.72);
+  --glass2: rgba(39, 225, 255, 0.06);
+  --line: rgba(120, 220, 255, 0.18);
+  --text: #eaf6ff;
+  --muted: #8fa6bf;
+  --orange: #27e1ff; /* primary accent (was orange) */
+  --accent: #27e1ff;
+  --accent2: #7c5cff;
+  --pink: #ff3d7f;
+  --gold: #ffcc4d;
+  --teal: #27e1ff;
+  --sky: #4aa8ff;
+  --violet: #7c5cff;
+  --green: #2ef2a0;
+  --red: #ff3b5c;
+  --grad: linear-gradient(135deg, #27e1ff 0%, #4a7dff 55%, #7c5cff 100%);
+  --grad-teal: linear-gradient(135deg, #2ef2a0, #27e1ff);
+  --shadow: 0 12px 36px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(39, 225, 255, 0.08);
+  --glow: 0 0 18px rgba(39, 225, 255, 0.35);
+  --cut: 14px; /* angled panel corner */
+  --ui-font: 'Rajdhani', 'Segoe UI', Roboto, sans-serif;
+  --num-font: 'Orbitron', 'Rajdhani', sans-serif;
+}
+
+html, body { font-family: var(--ui-font); font-weight: 500; letter-spacing: 0.02em; background: var(--ink); }
+h1, h2, h3, .btn, button { font-family: var(--ui-font); }
+h1, h2, h3 { letter-spacing: 0.04em; text-transform: uppercase; }
+
+/* subtle scanline + vignette over menus */
+#screens::after {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    repeating-linear-gradient(0deg, rgba(39, 225, 255, 0.025) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse at 50% 40%, transparent 55%, rgba(0, 0, 0, 0.45));
+}
+
+/* angled glass panels */
+.card, .panel, .tut-card, .res-card, .pause-card, .nav-card, .clock-chip, .wallet-chip, .fine-chip, .mission-bar, .toolbar, .loc-sign, .toast {
+  border-color: var(--line) !important;
+  box-shadow: var(--shadow);
+}
+.tut-card, .res-card, .pause-card, .panel {
+  border-radius: 4px !important;
+  clip-path: polygon(var(--cut) 0, 100% 0, 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, 0 100%, 0 var(--cut));
+  background: linear-gradient(160deg, rgba(14, 24, 44, 0.9), rgba(6, 10, 20, 0.86)) !important;
+  position: relative;
+}
+.tut-card::before, .res-card::before, .pause-card::before {
+  content: ''; position: absolute; left: var(--cut); right: 30%; top: 0; height: 2px; background: var(--grad); box-shadow: var(--glow);
+}
+.btn { border-radius: 4px; clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; }
+.btn.primary, .primary { background: var(--grad) !important; color: #031018 !important; box-shadow: var(--glow); }
+
+/* ---------- in-drive HUD ---------- */
+.toolbar { border-radius: 6px !important; background: rgba(6, 12, 24, 0.62) !important; backdrop-filter: blur(10px); }
+.tb { border-radius: 4px !important; color: #cfe9ff; transition: background .15s, color .15s, box-shadow .15s; }
+.tb.on, .tb.active { color: #031018 !important; background: var(--accent) !important; box-shadow: var(--glow); }
+.loc-sign { border-radius: 4px !important; clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%); }
+.loc-road { font-family: var(--ui-font); font-weight: 700; letter-spacing: 0.03em; }
+.clock-chip, .wallet-chip, .fine-chip { border-radius: 4px !important; background: rgba(6, 12, 24, 0.62) !important; font-family: var(--num-font); font-size: 13px; letter-spacing: 0.06em; }
+.round-btn { border-radius: 6px !important; background: linear-gradient(135deg, #ff3d7f, #7c5cff) !important; box-shadow: 0 0 16px rgba(255, 61, 127, 0.45); }
+.minimap { border-radius: 50%; box-shadow: 0 0 0 2px rgba(39, 225, 255, 0.55), 0 0 22px rgba(39, 225, 255, 0.25), var(--shadow); }
+.limit-sign { font-family: var(--num-font); }
+.ind-btn { border-radius: 6px !important; }
+.nav-dist, .w-balance, .m-dist { font-family: var(--num-font); }
+
+/* ---------- driving controls ---------- */
+#controls { font-family: var(--ui-font); }
+.ctl-btn {
+  background: linear-gradient(160deg, rgba(20, 32, 54, 0.55), rgba(6, 10, 20, 0.55)) !important;
+  border: 1px solid rgba(39, 225, 255, 0.35) !important;
+  color: #d8f6ff; backdrop-filter: blur(6px);
+  box-shadow: inset 0 0 18px rgba(39, 225, 255, 0.08), 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.ctl-btn.down { background: linear-gradient(160deg, rgba(39, 225, 255, 0.55), rgba(74, 125, 255, 0.45)) !important; color: #fff; box-shadow: 0 0 24px rgba(39, 225, 255, 0.6), inset 0 0 12px rgba(255, 255, 255, 0.3); transform: scale(.95); }
+
+/* steering pads: chevrons inside HUD corner brackets */
+.arrow { position: relative; border-radius: 6px !important; clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px); display: grid; place-items: center; }
+.arrow .chev { width: 58%; height: 58%; filter: drop-shadow(0 0 6px rgba(39, 225, 255, 0.6)); }
+.hud-corners { position: absolute; inset: 6px; pointer-events: none;
+  background:
+    linear-gradient(var(--accent), var(--accent)) left top / 12px 2px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) left top / 2px 12px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) right bottom / 12px 2px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) right bottom / 2px 12px no-repeat;
+  opacity: .8; }
+
+/* racing wheel */
+[data-mode="wheel"] .steer-wheel { width: clamp(150px, 24vw, 220px); height: clamp(150px, 24vw, 220px); position: relative; }
+.wheel-rim { border: 0 !important; box-shadow: none !important; background: none !important; will-change: transform; filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.55)); }
+.wheel-rim::before { content: ''; position: absolute; inset: 6%; border-radius: 50%; background: radial-gradient(circle, rgba(39, 225, 255, 0.08), transparent 70%); }
+.wheel-svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.w-led { fill: #1b2230; stroke: rgba(0, 0, 0, 0.6); stroke-width: 1; transition: fill .06s; }
+.w-led.on.g { fill: #2ef2a0; filter: drop-shadow(0 0 4px #2ef2a0); }
+.w-led.on.y { fill: #ffcc4d; filter: drop-shadow(0 0 4px #ffcc4d); }
+.w-led.on.r { fill: #ff3b5c; filter: drop-shadow(0 0 5px #ff3b5c); }
+.redline .w-led.on { animation: led-blink .12s steps(2) infinite; }
+@keyframes led-blink { 50% { fill: #1b2230; filter: none; } }
+.w-brand { font: 900 13px var(--num-font); fill: #eaf6ff; letter-spacing: 1px; }
+.w-sub { font: 700 7px var(--num-font); fill: #27e1ff; letter-spacing: 2px; }
+.w-glow { filter: drop-shadow(0 0 4px #27e1ff); }
+.wheel-angle { position: absolute; left: 50%; bottom: -16px; transform: translateX(-50%); font: 700 11px var(--num-font); color: var(--accent); text-shadow: 0 0 6px rgba(39, 225, 255, 0.7); pointer-events: none; }
+
+/* handbrake */
+.hand { width: 64px !important; height: 64px !important; border-radius: 50% !important; display: grid; place-items: center; align-content: center; gap: 0; padding: 0; color: #ff9fb3; border-color: rgba(255, 59, 92, 0.5) !important; }
+.hand svg { width: 30px; height: 30px; }
+.hand small { font: 700 8px var(--num-font); letter-spacing: 0.12em; color: #ffb7c6; }
+.hand.down { background: linear-gradient(160deg, rgba(255, 59, 92, 0.7), rgba(124, 92, 255, 0.5)) !important; box-shadow: 0 0 22px rgba(255, 59, 92, 0.6) !important; }
+
+/* pedals: brushed aluminium plates with rubber strips and a live pressure meter */
+.pedal {
+  width: clamp(70px, 9.5vw, 92px) !important; border: 0 !important; background: none !important; padding: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; overflow: visible;
+}
+.pedal.brake { height: clamp(96px, 14vw, 124px) !important; }
+.pedal.gas { height: clamp(132px, 21vw, 180px) !important; }
+.pedal-plate {
+  position: relative; flex: 1; width: 100%;
+  border-radius: 10px 10px 14px 14px;
+  clip-path: polygon(8% 0, 92% 0, 100% 10%, 100% 100%, 0 100%, 0 10%);
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.0), rgba(255, 255, 255, 0.18) 50%, rgba(255, 255, 255, 0)),
+    repeating-linear-gradient(90deg, #7b8594 0 1px, #9aa4b1 1px 3px),
+    #8c96a3;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.45), inset 0 -6px 12px rgba(0, 0, 0, 0.45), 0 10px 20px rgba(0, 0, 0, 0.5);
+  display: flex; flex-direction: column; justify-content: space-evenly; align-items: center; padding: 8px 0;
+  transition: transform .08s;
+  opacity: .88;
+}
+.pedal-plate i { display: block; width: 72%; height: 7px; border-radius: 4px; background: linear-gradient(#1b1f25, #2c323b); box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.8), 0 1px 0 rgba(255, 255, 255, 0.25); }
+.pedal.down .pedal-plate { transform: perspective(300px) rotateX(14deg) scale(.97); opacity: 1; }
+.pedal-meter { position: absolute; top: 6px; bottom: 26px; right: -9px; width: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.pedal-fill { position: absolute; inset: 0; transform-origin: bottom; transform: scaleY(0); }
+.pedal.gas .pedal-fill { background: linear-gradient(0deg, #2ef2a0, #27e1ff); box-shadow: 0 0 10px #2ef2a0; }
+.pedal.brake .pedal-fill { background: linear-gradient(0deg, #ff3b5c, #ff8a3d); box-shadow: 0 0 10px #ff3b5c; }
+.pedal-label { position: static !important; font: 700 9px var(--num-font); letter-spacing: 0.14em; }
+.pedal.gas .pedal-label { color: #7dffd0; text-shadow: 0 0 8px rgba(46, 242, 160, 0.6); }
+.pedal.brake .pedal-label { color: #ff9fb3; text-shadow: 0 0 8px rgba(255, 59, 92, 0.6); }
+.pedal.down .pedal-plate { box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.45), inset 0 -6px 12px rgba(0, 0, 0, 0.45), 0 0 24px rgba(39, 225, 255, 0.35); }
+
+/* tilt indicator */
+.tilt-ind { border-radius: 2px !important; background: rgba(6, 12, 24, 0.7) !important; border-color: var(--line) !important; }
+.tilt-bar { background: var(--grad) !important; box-shadow: var(--glow); border-radius: 2px !important; }
+.ctl-mini { border-radius: 4px !important; }
+
+/* menus: bottom navigation + chips */
+.bottom-nav { border-radius: 6px !important; background: rgba(6, 12, 24, 0.75) !important; border: 1px solid var(--line); box-shadow: var(--shadow); }
+.bottom-nav button.on { background: var(--grad) !important; color: #031018 !important; box-shadow: var(--glow); border-radius: 4px !important; }
+.nav-arrow { border-radius: 6px !important; border-color: var(--line) !important; box-shadow: var(--glow); }
+.dots i.on { background: var(--accent) !important; box-shadow: var(--glow); }
+
+@media (max-height: 430px) {
+  [data-mode="wheel"] .steer-wheel { width: 138px; height: 138px; }
+  .pedal.gas { height: 118px !important; }
+  .pedal.brake { height: 88px !important; }
+}

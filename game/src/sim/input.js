@@ -1,6 +1,44 @@
 // Driving controls: on-screen arrows, a touch steering wheel, gyroscope tilt
 // steering and keyboard (for desktop testing). Pedals are shared.
 
+// Racing wheel: flat-bottom carbon rim with alcantara grips, 12 o'clock
+// marker, three brushed spokes, LED shift lights and a glowing hub.
+const LEDS = Array.from({ length: 9 }, (_, i) => {
+  const a = (-58 + i * 14.5) * (Math.PI / 180);
+  const cls = i < 3 ? 'g' : i < 6 ? 'y' : 'r';
+  return `<circle class="w-led ${cls}" cx="${(100 + Math.sin(a) * 72).toFixed(1)}" cy="${(100 - Math.cos(a) * 72).toFixed(1)}" r="4.2"/>`;
+}).join('');
+const WHEEL_SVG = `<svg viewBox="0 0 200 200" class="wheel-svg">
+  <defs>
+    <linearGradient id="wRim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2b3340"/><stop offset=".5" stop-color="#11151c"/><stop offset="1" stop-color="#232a35"/></linearGradient>
+    <linearGradient id="wGrip" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#1a1d22"/><stop offset=".5" stop-color="#34383f"/><stop offset="1" stop-color="#1a1d22"/></linearGradient>
+    <linearGradient id="wMetal" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b9c3cf"/><stop offset=".45" stop-color="#5d6773"/><stop offset="1" stop-color="#9aa5b2"/></linearGradient>
+    <radialGradient id="wHub" cx=".5" cy=".4" r=".6"><stop offset="0" stop-color="#1d2a3a"/><stop offset="1" stop-color="#070a0f"/></radialGradient>
+    <pattern id="wCarbon" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="#141920"/><rect width="3" height="3" fill="#1e252f"/><rect x="3" y="3" width="3" height="3" fill="#1e252f"/></pattern>
+  </defs>
+  <!-- rim: round top, flat bottom -->
+  <path class="w-rim" d="M100 14a86 86 0 0 1 80 116l-14 24c-4 7-10 10-18 10H52c-8 0-14-3-18-10l-14-24A86 86 0 0 1 100 14Z" fill="none" stroke="url(#wRim)" stroke-width="20" stroke-linejoin="round"/>
+  <path d="M100 14a86 86 0 0 1 80 116l-14 24c-4 7-10 10-18 10H52c-8 0-14-3-18-10l-14-24A86 86 0 0 1 100 14Z" fill="none" stroke="rgba(39,225,255,.55)" stroke-width="1.4"/>
+  <!-- grips at 9 and 3 o'clock -->
+  <path d="M22 70a86 86 0 0 0 0 58" fill="none" stroke="url(#wGrip)" stroke-width="22" stroke-linecap="round"/>
+  <path d="M178 70a86 86 0 0 1 0 58" fill="none" stroke="url(#wGrip)" stroke-width="22" stroke-linecap="round"/>
+  <!-- 12 o'clock marker -->
+  <rect x="95" y="3" width="10" height="21" rx="2" fill="#27e1ff"/>
+  ${LEDS}
+  <!-- spokes -->
+  <path d="M28 104 74 94l6 24-50 6Z" fill="url(#wMetal)"/>
+  <path d="M172 104 126 94l-6 24 50 6Z" fill="url(#wMetal)"/>
+  <path d="M86 128h28l8 34H78Z" fill="url(#wCarbon)" stroke="#2c3440"/>
+  <!-- hub -->
+  <circle cx="100" cy="106" r="31" fill="url(#wHub)" stroke="#2c3440" stroke-width="2"/>
+  <circle class="w-glow" cx="100" cy="106" r="24" fill="none" stroke="#27e1ff" stroke-width="2.4"/>
+  <text x="100" y="104" text-anchor="middle" class="w-brand">UAE</text>
+  <text x="100" y="118" text-anchor="middle" class="w-sub">DRIVE</text>
+  <!-- paddle shifters peeking out behind the rim -->
+  <rect x="52" y="60" width="14" height="30" rx="4" fill="#3a4250" transform="rotate(-28 59 75)"/>
+  <rect x="134" y="60" width="14" height="30" rx="4" fill="#3a4250" transform="rotate(28 141 75)"/>
+</svg>`;
+
 export class Input {
   constructor(root, mode = 'arrows', sensitivity = 1) {
     this.root = root;
@@ -64,20 +102,30 @@ export class Input {
 
   build() {
     const r = this.root;
+    const chevron = (dir) => `<svg viewBox="0 0 100 100" class="chev"><g fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="${dir < 0 ? 'M58 22 30 50l28 28' : 'M42 22l28 28-28 28'}"/><path d="${dir < 0 ? 'M80 30 60 50l20 20' : 'M20 30l20 20-20 20'}" opacity=".45"/></g></svg>`;
+    const pedal = (kind, label) => `<button class="pedal ${kind}" data-k="${kind}">
+        <span class="pedal-plate"><i></i><i></i><i></i><i></i><i></i></span>
+        <span class="pedal-meter"><span class="pedal-fill"></span></span>
+        <span class="pedal-label">${label}</span></button>`;
     r.innerHTML = `
       <div class="ctl-left">
         <div class="steer-arrows">
-          <button class="ctl-btn arrow" data-k="left">◀</button>
-          <button class="ctl-btn arrow" data-k="right">▶</button>
+          <button class="ctl-btn arrow" data-k="left" aria-label="Steer left">${chevron(-1)}<span class="hud-corners"></span></button>
+          <button class="ctl-btn arrow" data-k="right" aria-label="Steer right">${chevron(1)}<span class="hud-corners"></span></button>
         </div>
-        <div class="steer-wheel"><div class="wheel-rim"><div class="wheel-spoke"></div><div class="wheel-hub">✦</div></div></div>
+        <div class="steer-wheel"><div class="wheel-rim">${WHEEL_SVG}</div><div class="wheel-angle"></div></div>
         <div class="steer-tilt"><div class="tilt-ind"><div class="tilt-bar"></div></div><button class="ctl-mini" data-a="calibrate">Re-centre</button></div>
       </div>
       <div class="ctl-right">
-        <button class="ctl-btn hand" data-k="hand">HAND<br>BRAKE</button>
-        <button class="pedal brake" data-k="brake"><span>BRAKE</span></button>
-        <button class="pedal gas" data-k="gas"><span>GAS</span></button>
+        <button class="ctl-btn hand" data-k="hand" aria-label="Handbrake"><svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="17" fill="none" stroke="currentColor" stroke-width="3"/><text x="24" y="31" text-anchor="middle" font-size="20" font-weight="800" fill="currentColor">P</text><path d="M7 12a22 22 0 0 0 0 24M41 12a22 22 0 0 1 0 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg><small>HAND</small></button>
+        ${pedal('brake', 'BRAKE')}
+        ${pedal('gas', 'THROTTLE')}
       </div>`;
+    this.leds = [...r.querySelectorAll('.w-led')];
+    this.gasFill = r.querySelector('.gas .pedal-fill');
+    this.brakeFill = r.querySelector('.brake .pedal-fill');
+    this.angleEl = r.querySelector('.wheel-angle');
     r.querySelectorAll('[data-k]').forEach((el) => this.hold(el, el.dataset.k));
     r.querySelector('[data-a="calibrate"]').addEventListener('click', () => (this.tiltZero = null));
 
@@ -203,7 +251,18 @@ export class Input {
       steer = ramp(s.steer, 0, 3, 4);
     }
     s.steer = steer;
-    if (this.rimEl) this.rimEl.style.transform = `rotate(${(this.mode === 'wheel' ? this.wheelAngle : steer * 2.4)}rad)`;
+    const wheelRad = this.mode === 'wheel' ? this.wheelAngle : steer * 2.4;
+    if (this.rimEl) this.rimEl.style.transform = `rotate(${wheelRad}rad)`;
+    if (this.angleEl) this.angleEl.textContent = `${Math.round((wheelRad * 180) / Math.PI)}°`;
+    if (this.gasFill) this.gasFill.style.transform = `scaleY(${s.throttle})`;
+    if (this.brakeFill) this.brakeFill.style.transform = `scaleY(${s.brake})`;
+    // shift lights follow the engine (set by the game every frame)
+    const lit = Math.round(Math.max(0, (this.rpm || 0) - 0.35) / 0.6 * this.leds.length);
+    if (lit !== this.litLeds) {
+      this.litLeds = lit;
+      this.leds.forEach((l, i) => l.classList.toggle('on', i < lit));
+      this.root.classList.toggle('redline', lit >= this.leds.length);
+    }
     if (this.tiltBar) this.tiltBar.style.transform = `translateX(${steer * 50}%)`;
     return s;
   }

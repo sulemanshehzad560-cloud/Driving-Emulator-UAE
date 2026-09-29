@@ -11,6 +11,7 @@ import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js
 import { styleDims, plateMaterial } from './carFactory.js';
 
 const templates = new Map();
+let posedBounds = false; // measure skinned parts in their posed shape (per model, see cfg.posedBounds)
 const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder); // car models are meshopt-compressed
 
 /** Load (once) and return the parsed glTF scene for a model spec, or null if unavailable. */
@@ -39,6 +40,11 @@ function worldBox(obj, root) {
   const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
   obj.traverse((o) => {
     if (!o.isMesh || !o.visible) return;
+    if (o.isSkinnedMesh && posedBounds) {
+      // rigged parts: measure the posed (skinned) vertices, not the bind pose
+      b.union(new THREE.Box3().setFromObject(o, true).applyMatrix4(inv));
+      return;
+    }
     o.geometry.computeBoundingBox();
     b.union(o.geometry.boundingBox.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld)));
   });
@@ -84,12 +90,33 @@ function autoWheels(scene, car, holder, tireRe) {
 }
 
 /**
+ * Some rigged models ship with a few parts skinned to bones that end up metres
+ * (or hundreds of metres) away from the car. Hide anything far from the body.
+ */
+function hideStrayParts(scene, car) {
+  const parts = [];
+  scene.traverse((o) => { if (o.isMesh && o.visible) parts.push([o, worldBox(o, car)]); });
+  const xs = [], ys = [], zs = [];
+  for (const [, b] of parts) {
+    const c = b.getCenter(new THREE.Vector3());
+    xs.push(c.x); ys.push(c.y); zs.push(c.z);
+  }
+  const med = (a) => a.sort((p, q) => p - q)[a.length >> 1];
+  const mid = new THREE.Vector3(med(xs), med(ys), med(zs));
+  for (const [o, b] of parts) {
+    const size = b.getSize(new THREE.Vector3());
+    if (b.getCenter(new THREE.Vector3()).distanceTo(mid) > 4 || Math.max(size.x, size.y, size.z) > 7) o.visible = false;
+  }
+}
+
+/**
  * Build a drivable car from a loaded template.
  * spec: catalog entry (style for physics dimensions, model config); color: body paint.
  */
 export function instantiateModelCar(spec, template, color) {
   const cfg = spec.model;
   const st = styleDims(spec.style);
+  posedBounds = !!cfg.posedBounds;
   const car = new THREE.Group();
   const holder = new THREE.Group(); // model space -> car space
   const scene = cloneSkinned(template);
@@ -112,6 +139,7 @@ export function instantiateModelCar(spec, template, color) {
   const hideMat = cfg.hideMat ? new RegExp(cfg.hideMat, 'i') : null;
   if (hideMat) scene.traverse((o) => { if (o.isMesh && hideMat.test(o.material?.name || '')) o.visible = false; });
   car.updateMatrixWorld(true);
+  if (cfg.hideFar) hideStrayParts(scene, car);
 
   // wheel centres (car space) to scale and place the model
   let wheelNodes;
@@ -231,33 +259,48 @@ export function instantiateModelCar(spec, template, color) {
 }
 
 const trafficPaint = new Map();
-/** Light traffic car from a small model (one draw call per material, no shadows). */
-export function modelTrafficCar(template, paintMat, color) {
+const taxiSigns = new Map();
+/**
+ * Traffic car from a light model (game/scripts/traffic-lods.mjs: faces -Z, ground
+ * at y = 0, centred). One draw call per material, no shadows. Taxis get the
+ * operator's roof sign.
+ */
+export function modelTrafficCar(template, type, color) {
   const g = new THREE.Group();
   const h = template.clone(true);
-  h.rotation.y = Math.PI; // models face +z, cars face -z
   g.add(h);
   h.traverse((o) => {
     if (!o.isMesh) return;
     o.castShadow = false;
-    const n = o.material?.name || '';
-    if (paintMat && n === paintMat) {
+    const m0 = o.material;
+    const n = m0?.name || '';
+    if (type.paintMat && n === type.paintMat) {
       const key = `${template.uuid}-${color}`;
       if (!trafficPaint.has(key)) {
-        const m = o.material.clone();
+        const m = m0.clone();
         m.color.set(color);
-        m.metalness = 0.45;
-        m.roughness = 0.32;
+        m.map = null; // factory livery textures would tint the chosen colour
+        m.metalness = 0.55;
+        m.roughness = 0.28;
+        if ('clearcoat' in m) { m.clearcoat = 1; m.clearcoatRoughness = 0.06; }
         m.userData.isPaint = true;
         trafficPaint.set(key, m);
       }
       o.material = trafficPaint.get(key);
-    } else if (n === 'Windows' && !o.material.userData.tuned) {
-      o.material.color.set(0x0c1118);
-      o.material.metalness = 0.3;
-      o.material.roughness = 0.08;
-      o.material.userData.tuned = true;
+    } else if (m0 && m0.transmission > 0) {
+      o.material = glassMat; // no transmission pass for traffic
     }
   });
+  if (type.taxi) {
+    const box = new THREE.Box3().setFromObject(h);
+    if (!taxiSigns.has(type.taxiRoof)) {
+      taxiSigns.set(type.taxiRoof, new THREE.MeshStandardMaterial({ color: type.taxiRoof, emissive: type.taxiRoof, emissiveIntensity: 0.35, roughness: 0.4 }));
+    }
+    const sign = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.2, 0.28), taxiSigns.get(type.taxiRoof));
+    sign.position.set(0, box.max.y + 0.08, 0.1);
+    const base = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.04, 0.34), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+    base.position.set(0, box.max.y - 0.01, 0.1);
+    g.add(sign, base);
+  }
   return g;
 }

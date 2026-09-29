@@ -706,6 +706,7 @@ export class Game {
     this.time += dt;
     this.frame++;
     const p = this.player;
+    this.input.rpm = p.rpm / 7500; // wheel shift lights
     const input = this.input.update(dt);
     const outOfFuel = this.fuel <= 0;
     const eff = { ...input, throttle: outOfFuel ? 0 : input.throttle };

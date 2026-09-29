@@ -447,47 +447,107 @@ export function kerbStripes(n = 128) {
   return fieldToCanvas(n, (x, y) => (y < n / 2 ? [240, 190, 20] : [30, 30, 30]));
 }
 
-export function palmLeaf(n = 256) {
-  const c = canvas(n);
+/**
+ * Date-palm frond: a strip texture (u across the frond, v from base to tip)
+ * with a tapering midrib and ~70 pairs of narrow, pointed leaflets in varied
+ * greens, sun-bleached/dry tips and the odd missing leaflet. Alpha = shape.
+ */
+export function palmLeaf(w = 512, h = 1024) {
+  const c = canvas(w, h);
   const ctx = c.getContext('2d');
-  ctx.clearRect(0, 0, n, n);
-  // central rib along x, leaflets angled towards the tip
-  ctx.strokeStyle = '#6b7a2a';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(n / 2, n);
-  ctx.lineTo(n / 2, 0);
-  ctx.stroke();
-  for (let i = 0; i < 38; i++) {
-    const t = i / 38;
-    const y = n - t * n;
-    const len = Math.sin(t * Math.PI) * n * 0.45 + 6;
+  ctx.clearRect(0, 0, w, h);
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const cx = w / 2;
+  const pairs = 70;
+  for (let i = 0; i < pairs; i++) {
+    const t = (i + 0.5) / pairs; // 0 base .. 1 tip
+    if (t < 0.12) continue; // bare petiole with spines at the base
+    const y = h - t * h;
+    const len = (Math.sin(Math.min(1, t * 1.25) * Math.PI) * 0.46 + 0.04) * w;
     for (const s of [-1, 1]) {
-      const g = ctx.createLinearGradient(n / 2, y, n / 2 + s * len, y - len * 0.35);
-      g.addColorStop(0, '#3d6b22');
-      g.addColorStop(1, '#6f9a32');
-      ctx.strokeStyle = g;
-      ctx.lineWidth = 3.2;
+      if (rnd() < 0.05) continue; // missing / broken leaflet
+      const l = len * (0.85 + rnd() * 0.3);
+      const ang = 0.55 + rnd() * 0.12; // leaflets point towards the tip
+      const ex = cx + s * l * Math.cos(ang), ey = y - l * Math.sin(ang);
+      const base = 5 + (1 - t) * 4;
+      const hue = 78 + rnd() * 18, sat = 38 + rnd() * 18, lum = 24 + rnd() * 12;
+      const g = ctx.createLinearGradient(cx, y, ex, ey);
+      g.addColorStop(0, `hsl(${hue},${sat}%,${lum - 6}%)`);
+      g.addColorStop(0.7, `hsl(${hue},${sat}%,${lum + 4}%)`);
+      g.addColorStop(1, rnd() < 0.35 ? `hsl(42,45%,${48 + rnd() * 12}%)` : `hsl(${hue - 6},${sat - 10}%,${lum + 12}%)`); // dry tips
+      ctx.fillStyle = g;
       ctx.beginPath();
-      ctx.moveTo(n / 2, y);
-      ctx.quadraticCurveTo(n / 2 + s * len * 0.5, y - len * 0.1, n / 2 + s * len, y - len * 0.4);
+      // narrow blade: widest near the rib, pointed tip, slight curve
+      const mx = cx + s * l * 0.5 * Math.cos(ang - 0.06), my = y - l * 0.5 * Math.sin(ang - 0.06);
+      ctx.moveTo(cx, y - base * 0.5);
+      ctx.quadraticCurveTo(mx, my - base * 0.7, ex, ey);
+      ctx.quadraticCurveTo(mx, my + base * 0.7, cx, y + base * 0.5);
+      ctx.closePath();
+      ctx.fill();
+      // fold line down the leaflet
+      ctx.strokeStyle = 'rgba(20,35,10,0.35)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx, y);
+      ctx.quadraticCurveTo(mx, my, ex, ey);
+      ctx.stroke();
+    }
+  }
+  // midrib (rachis): thick at the base, yellow-green
+  const rib = ctx.createLinearGradient(0, h, 0, 0);
+  rib.addColorStop(0, '#9c8a4a');
+  rib.addColorStop(0.3, '#8a8f45');
+  rib.addColorStop(1, '#6d8235');
+  ctx.fillStyle = rib;
+  ctx.beginPath();
+  ctx.moveTo(cx - 9, h);
+  ctx.lineTo(cx - 1.5, 0);
+  ctx.lineTo(cx + 1.5, 0);
+  ctx.lineTo(cx + 9, h);
+  ctx.closePath();
+  ctx.fill();
+  // spines on the petiole
+  ctx.strokeStyle = '#8c7a40';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 10; i++) {
+    const y = h - (i / 10) * h * 0.12;
+    for (const s of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(cx + s * 8, y);
+      ctx.lineTo(cx + s * (26 + rnd() * 10), y - 18);
       ctx.stroke();
     }
   }
   return c;
 }
 
-export function palmTrunk(n = 128) {
-  const f = fbm(n, { scale: 16, octaves: 3, seed: 44 });
+/**
+ * Date-palm trunk: rows of diamond-shaped leaf-base "boots" left by old
+ * fronds, fibrous between them. Tiles horizontally around the trunk.
+ */
+export function palmTrunk(n = 512) {
+  const f = fbm(n, { scale: 48, octaves: 4, seed: 44 });
+  const fibre = fbm(n, { scale: 160, octaves: 2, seed: 9 });
   const height = new Float32Array(n * n);
+  const rows = 16, cols = 8;
+  const cw = n / cols, rh = n / rows;
   const color = fieldToCanvas(n, (x, y) => {
-    const ring = (y % 16) / 16;
-    const diamond = Math.abs(((x + (Math.floor(y / 16) % 2) * 8) % 16) - 8) / 8;
-    const v = 0.7 + f[y * n + x] * 0.3 - (ring < 0.15 ? 0.25 : 0) - diamond * 0.1;
-    height[y * n + x] = ring < 0.15 ? 0 : 0.6 + diamond * 0.4;
-    return [130 * v, 100 * v, 70 * v];
+    const row = Math.floor(y / rh);
+    const off = (row % 2) * cw * 0.5;
+    const u = (((x + off) % cw) / cw) * 2 - 1; // -1..1 across a boot
+    const v = ((y % rh) / rh) * 2 - 1; // -1..1 up a boot
+    // diamond boot, stub end cut flat at the top
+    const d = Math.abs(u) * 0.9 + Math.abs(v) * 0.75;
+    const boot = Math.max(0, 1 - d);
+    const cut = v < -0.55 ? 0.35 : 1;
+    const hgt = boot ** 0.6 * cut + fibre[y * n + x] * 0.15;
+    height[y * n + x] = hgt;
+    const tone = 0.55 + f[y * n + x] * 0.35 + boot * 0.25 - (boot < 0.05 ? 0.2 : 0) + fibre[y * n + x] * 0.12;
+    const cutFace = v < -0.55 && boot > 0.1; // fresh cut ends are paler
+    return cutFace ? [178 * tone, 150 * tone, 108 * tone] : [120 * tone, 92 * tone, 62 * tone];
   });
-  return { color, normal: normalFromHeight(height, n, 3) };
+  return { color, normal: normalFromHeight(height, n, 5) };
 }
 
 export function glow(n = 64, stops = [[0, 'rgba(255,255,255,1)'], [0.3, 'rgba(255,255,255,0.5)'], [1, 'rgba(255,255,255,0)']]) {

@@ -339,9 +339,10 @@ export class WorldMaterials {
     }
 
     // ---------------- props
-    const trunk = TG.palmTrunk(128);
-    M.palmTrunk = new THREE.MeshStandardMaterial({ map: this.tex(trunk.color), normalMap: this.tex(trunk.normal, { srgb: false }), roughness: 1 });
-    M.palmLeaf = new THREE.MeshStandardMaterial({ map: this.tex(TG.palmLeaf(256), { repeat: false }), alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.8 });
+    const trunk = TG.palmTrunk(512);
+    M.palmTrunk = new THREE.MeshStandardMaterial({ map: this.tex(trunk.color), normalMap: this.tex(trunk.normal, { srgb: false }), normalScale: new THREE.Vector2(1.4, 1.4), roughness: 0.95 });
+    M.palmLeaf = new THREE.MeshStandardMaterial({ map: this.tex(TG.palmLeaf(512, 1024), { repeat: false }), alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.62, metalness: 0 });
+    windSway(M.palmLeaf);
     M.pole = new THREE.MeshStandardMaterial({ color: 0x9aa2aa, metalness: 0.75, roughness: 0.35 });
     M.darkMetal = new THREE.MeshStandardMaterial({ color: 0x2c3036, metalness: 0.6, roughness: 0.45 });
     M.lampHead = new THREE.MeshStandardMaterial({ color: 0xe8e8e8, emissive: 0xffd6a0, emissiveIntensity: 0 });
@@ -388,4 +389,29 @@ export async function loadArtManifest(base = 'art') {
   } catch (e) {
     return null;
   }
+}
+
+/**
+ * Fronds sway in the wind: displacement grows with distance from the crown so
+ * tips move and bases stay put; each palm gets its own phase from its position.
+ */
+function windSway(mat) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uTime = shared.uTime;
+    sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+      #ifdef USE_INSTANCING
+        float phase = instanceMatrix[3].x * 0.13 + instanceMatrix[3].z * 0.07;
+      #else
+        float phase = 0.0;
+      #endif
+      float reach = clamp(length(position.xz) / 4.0, 0.0, 1.0);
+      float gust = 0.6 + 0.4 * sin(uTime * 0.37 + phase * 0.5);
+      transformed.x += sin(uTime * 1.7 + phase + position.y * 0.6) * 0.16 * reach * reach * gust;
+      transformed.z += cos(uTime * 1.3 + phase * 1.3 + position.x * 0.5) * 0.12 * reach * reach * gust;
+      transformed.y += sin(uTime * 2.1 + phase + position.x) * 0.08 * reach * reach * gust;`,
+    );
+  };
+  mat.customProgramCacheKey = () => 'palm-wind';
 }

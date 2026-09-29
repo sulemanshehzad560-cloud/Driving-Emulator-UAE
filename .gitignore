@@ -14,3 +14,5 @@ game/public/world/
 game/public/art/
 physics/target/
 game/public/cars/*.glb
+game/public/traffic/hero-*.glb
+game/.viewer/

@@ -544,81 +544,102 @@ export class Hud {
     ctx.restore();
   }
 
+  /** Digital cluster: segmented speed ring, rpm arc, limit marker, Orbitron numerals. */
   drawSpeedo(v, limit) {
     const ctx = this.speedo;
-    const W = 320, cx = 160, cy = 160, R = 140;
+    const W = 320, cx = 160, cy = 160, R = 138;
     const max = Math.max(260, Math.ceil(v.spec.topSpeed / 20) * 20);
     ctx.clearRect(0, 0, W, W);
-    const a0 = Math.PI * 0.78, a1 = Math.PI * 2.22;
+    const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
     const ang = (k) => a0 + (a1 - a0) * Math.min(1, k / max);
-    // backing disc
-    const g = ctx.createRadialGradient(cx, cy, 30, cx, cy, R + 10);
-    g.addColorStop(0, 'rgba(14,18,26,0.92)');
-    g.addColorStop(1, 'rgba(6,8,12,0.75)');
+    const over = v.kmh > limit + 5;
+    // backing disc with a thin cyan bezel
+    const g = ctx.createRadialGradient(cx, cy, 20, cx, cy, R + 14);
+    g.addColorStop(0, 'rgba(10,20,36,0.95)');
+    g.addColorStop(0.8, 'rgba(4,8,16,0.88)');
+    g.addColorStop(1, 'rgba(4,8,16,0.2)');
     ctx.fillStyle = g;
     ctx.beginPath();
-    ctx.arc(cx, cy, R + 10, 0, Math.PI * 2);
+    ctx.arc(cx, cy, R + 14, 0, Math.PI * 2);
     ctx.fill();
-    // track
+    ctx.strokeStyle = 'rgba(39,225,255,0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R + 10, 0, Math.PI * 2);
+    ctx.stroke();
+    // segmented speed ring
+    const segs = 54;
+    const lit = (v.kmh / max) * segs;
+    ctx.lineWidth = 15;
+    ctx.lineCap = 'butt';
+    for (let i = 0; i < segs; i++) {
+      const s0 = a0 + ((a1 - a0) * i) / segs, s1 = s0 + ((a1 - a0) / segs) * 0.72;
+      const t = i / segs;
+      let col = 'rgba(120,180,220,0.10)';
+      if (i < lit) {
+        if (over) col = '#ff3b5c';
+        else col = t < 0.45 ? '#27e1ff' : t < 0.7 ? '#4a7dff' : t < 0.85 ? '#7c5cff' : '#ff3d7f';
+      }
+      ctx.strokeStyle = col;
+      ctx.shadowColor = i < lit ? col : 'transparent';
+      ctx.shadowBlur = i < lit ? 10 : 0;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R - 10, s0, s1);
+      ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+    // rpm arc (inner)
+    const rpmN = Math.min(1, v.rpm / 7500);
+    ctx.lineWidth = 4;
     ctx.lineCap = 'round';
-    ctx.lineWidth = 14;
     ctx.strokeStyle = 'rgba(255,255,255,0.08)';
     ctx.beginPath();
-    ctx.arc(cx, cy, R - 12, a0, a1);
+    ctx.arc(cx, cy, R - 30, a0, a1);
     ctx.stroke();
-    // speed arc: cyan -> green -> amber -> red past the limit
-    const speedA = ang(v.kmh);
-    let grad = '#34c759';
-    if (ctx.createConicGradient) {
-      grad = ctx.createConicGradient(a0, cx, cy);
-      grad.addColorStop(0, '#00d4ff');
-      grad.addColorStop(0.35, '#34c759');
-      grad.addColorStop(0.6, '#ffd60a');
-      grad.addColorStop(0.72, '#ff453a');
-    }
-    ctx.strokeStyle = v.kmh > limit + 5 ? '#ff453a' : grad;
+    ctx.strokeStyle = rpmN > 0.86 ? '#ff3b5c' : '#ffcc4d';
+    ctx.shadowColor = ctx.strokeStyle;
+    ctx.shadowBlur = 8;
     ctx.beginPath();
-    ctx.arc(cx, cy, R - 12, a0, Math.max(a0 + 0.001, speedA));
+    ctx.arc(cx, cy, R - 30, a0, a0 + (a1 - a0) * rpmN);
     ctx.stroke();
-    // rpm inner arc
-    const rpmN = Math.min(1, v.rpm / 7500);
-    ctx.lineWidth = 5;
-    ctx.strokeStyle = rpmN > 0.86 ? '#ff453a' : 'rgba(255,214,10,0.85)';
-    ctx.beginPath();
-    ctx.arc(cx, cy, R - 32, a0, a0 + (a1 - a0) * rpmN);
-    ctx.stroke();
-    // ticks
-    ctx.fillStyle = '#c9d2dd';
-    ctx.font = '600 15px system-ui, sans-serif';
+    ctx.shadowBlur = 0;
+    // scale numerals
+    ctx.fillStyle = '#9fb6cc';
+    ctx.font = '700 13px Orbitron, Rajdhani, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    for (let k = 0; k <= max; k += 20) {
+    const step = max > 300 ? 60 : 40;
+    for (let k = 0; k <= max; k += step) {
       const a = ang(k);
-      ctx.strokeStyle = k > limit ? 'rgba(255,99,90,0.9)' : 'rgba(220,226,234,0.8)';
-      ctx.lineWidth = k % 40 === 0 ? 3 : 1.5;
-      ctx.beginPath();
-      ctx.moveTo(cx + Math.cos(a) * (R + 2), cy + Math.sin(a) * (R + 2));
-      ctx.lineTo(cx + Math.cos(a) * (R - 4), cy + Math.sin(a) * (R - 4));
-      ctx.stroke();
-      if (k % 40 === 0) ctx.fillText(k, cx + Math.cos(a) * (R - 52), cy + Math.sin(a) * (R - 52));
+      ctx.fillStyle = k > limit ? 'rgba(255,120,140,0.9)' : '#9fb6cc';
+      ctx.fillText(k, cx + Math.cos(a) * (R - 52), cy + Math.sin(a) * (R - 52));
     }
-    // limit marker
+    // speed limit marker
     const la = ang(limit);
-    ctx.strokeStyle = '#ff375f';
-    ctx.lineWidth = 6;
+    ctx.strokeStyle = '#ff3b5c';
+    ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.arc(cx, cy, R - 12, la - 0.025, la + 0.025);
+    ctx.moveTo(cx + Math.cos(la) * (R + 4), cy + Math.sin(la) * (R + 4));
+    ctx.lineTo(cx + Math.cos(la) * (R - 22), cy + Math.sin(la) * (R - 22));
     ctx.stroke();
     // digits
-    ctx.fillStyle = v.kmh > limit + 5 ? '#ff6961' : '#ffffff';
-    ctx.font = '800 64px system-ui, sans-serif';
-    ctx.fillText(Math.round(v.kmh), cx, cy - 4);
-    ctx.fillStyle = '#8a95a3';
-    ctx.font = '600 14px system-ui, sans-serif';
-    ctx.fillText('km/h', cx, cy + 34);
-    ctx.fillStyle = '#ffd60a';
-    ctx.font = '800 24px system-ui, sans-serif';
-    ctx.fillText(v.gear === -1 ? 'R' : v.kmh < 1 ? 'N' : `D${v.gear}`, cx, cy + 74);
+    ctx.fillStyle = over ? '#ff5c78' : '#ffffff';
+    ctx.shadowColor = over ? '#ff3b5c' : 'rgba(39,225,255,0.8)';
+    ctx.shadowBlur = 14;
+    ctx.font = '900 58px Orbitron, Rajdhani, sans-serif';
+    ctx.fillText(Math.round(v.kmh), cx, cy - 2);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#6f8aa6';
+    ctx.font = '700 12px Orbitron, Rajdhani, sans-serif';
+    ctx.fillText('KM/H', cx, cy + 34);
+    // gear in a small cyan box
+    const gear = v.gear === -1 ? 'R' : v.kmh < 1 ? 'N' : `D${v.gear}`;
+    ctx.strokeStyle = 'rgba(39,225,255,0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(cx - 26, cy + 56, 52, 30);
+    ctx.fillStyle = v.gear === -1 ? '#ff5c78' : '#27e1ff';
+    ctx.font = '900 20px Orbitron, Rajdhani, sans-serif';
+    ctx.fillText(gear, cx, cy + 72);
   }
 
   update(st) {

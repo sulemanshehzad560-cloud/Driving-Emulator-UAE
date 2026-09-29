@@ -1,5 +1,11 @@
 // UAE Drive app shell: splash -> disclaimer -> sign-in -> home (drive,
 // garage, map, profile, settings) -> loading -> driving session -> results.
+import '@fontsource/rajdhani/500.css';
+import '@fontsource/rajdhani/600.css';
+import '@fontsource/rajdhani/700.css';
+import '@fontsource/orbitron/700.css';
+import '@fontsource/orbitron/900.css';
+import './theme-tech.css';
 import * as THREE from 'three';
 import { loadProfile, saveProfile, resetProfile, level } from './storage.js';
 import { CARS, carById } from './cars/catalog.js';
@@ -295,6 +301,11 @@ function home(t = tab) {
     home();
   });
   bindTab(tab);
+  if (profile.garageRefund) {
+    toast(`${icon('star')} New garage line-up! Retired cars refunded: +AED ${profile.garageRefund.toLocaleString()}`);
+    delete profile.garageRefund;
+    saveProfile();
+  }
 }
 
 const MODES = [

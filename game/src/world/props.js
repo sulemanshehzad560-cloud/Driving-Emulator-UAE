@@ -25,33 +25,63 @@ export class Props {
 
   build() {
     const G = this.geo;
-    // ---- date palm: curved ringed trunk + 14 drooping fronds + crown
-    const trunk = new THREE.CylinderGeometry(0.2, 0.32, 8, 10, 8, true);
-    trunk.translate(0, 4, 0);
+    // ---- date palm: leaning trunk covered in leaf-base boots, a skirt of old
+    // boots under the crown and ~30 fronds in three tiers (young upright,
+    // mature spreading, old drooping) with leaflets folded into a V
+    let seed = 11;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const PH = 8;
+    const trunk = new THREE.CylinderGeometry(0.24, 0.36, PH, 16, 24, true);
+    trunk.translate(0, PH / 2, 0);
     const tp = trunk.attributes.position;
     const tuv = trunk.attributes.uv;
+    const lean = (y) => (y / PH) ** 2 * 0.55;
     for (let i = 0; i < tp.count; i++) {
       const y = tp.getY(i);
-      tp.setX(i, tp.getX(i) + (y / 8) ** 2 * 0.6);
-      tuv.setXY(i, tuv.getX(i) * 2, (y / 8) * 12);
+      // knobbly boots + slight swelling at the base
+      const bump = 1 + 0.05 * Math.sin(y * 25 + Math.atan2(tp.getZ(i), tp.getX(i)) * 8) + (y < 0.8 ? (0.8 - y) * 0.25 : 0);
+      tp.setX(i, tp.getX(i) * bump + lean(y));
+      tp.setZ(i, tp.getZ(i) * bump);
+      tuv.setXY(i, tuv.getX(i), (y / PH) * 2);
     }
     trunk.computeVertexNormals();
-    G.palmTrunk = trunk;
+    // skirt of dry boots just below the crown
+    const skirt = new THREE.CylinderGeometry(0.42, 0.26, 1.1, 16, 3, true);
+    skirt.translate(lean(PH), PH - 0.35, 0);
+    G.palmTrunk = merge([trunk, skirt]);
+    const topX = lean(PH);
     const fronds = [];
-    for (let i = 0; i < 14; i++) {
-      const len = 3.4 + (i % 3) * 0.4;
-      const g = new THREE.PlaneGeometry(1.3, len, 1, 6);
-      const p = g.attributes.position;
-      for (let k = 0; k < p.count; k++) {
-        const t = Math.min(1, Math.max(0, (p.getY(k) + len / 2) / len)); // 0 at base, 1 at tip
-        p.setY(k, t * len);
-        p.setZ(k, -(t ** 1.8) * len * 0.55 + (p.getX(k) ** 2) * 0.25); // droop + V-shaped leaflets
+    const tiers = [
+      { n: 7, pitch: 1.15, len: [2.6, 3.2], droop: 0.25, y: 0.35 }, // young, near vertical
+      { n: 12, pitch: 0.55, len: [3.6, 4.4], droop: 0.55, y: 0.05 }, // mature, spreading
+      { n: 11, pitch: 0.05, len: [3.4, 4.2], droop: 1.05, y: -0.25 }, // old, drooping
+    ];
+    tiers.forEach((tier, ti) => {
+      for (let i = 0; i < tier.n; i++) {
+        const len = tier.len[0] + rnd() * (tier.len[1] - tier.len[0]);
+        const wid = 1.1 + len * 0.12;
+        const g = new THREE.PlaneGeometry(wid, len, 4, 14);
+        const p = g.attributes.position;
+        const droop = tier.droop * (0.85 + rnd() * 0.3);
+        const twist = (rnd() - 0.5) * 0.5;
+        for (let k = 0; k < p.count; k++) {
+          const t = Math.min(1, Math.max(0, (p.getY(k) + len / 2) / len)); // 0 base .. 1 tip
+          let x = p.getX(k);
+          // leaflets fold up into a V; the frond narrows towards the tip
+          const fold = Math.abs(x) * 0.55;
+          x *= 1 - t * 0.25;
+          const y = t * len;
+          const z = -(t ** 2) * len * droop + fold;
+          // twist the frond along its length
+          const a = twist * t;
+          p.setXYZ(k, x * Math.cos(a) - z * Math.sin(a), y, x * Math.sin(a) + z * Math.cos(a));
+        }
+        g.rotateX(-Math.PI / 2 + tier.pitch + (rnd() - 0.5) * 0.2);
+        g.rotateY((i / tier.n) * Math.PI * 2 + ti * 0.4 + (rnd() - 0.5) * 0.25);
+        g.translate(topX, PH + tier.y, 0);
+        fronds.push(g);
       }
-      g.rotateX(-Math.PI / 2 + 0.55 - (i % 2) * 0.35);
-      g.rotateY((i / 14) * Math.PI * 2 + (i % 3) * 0.15);
-      g.translate(0.6, 7.9, 0);
-      fronds.push(g);
-    }
+    });
     G.palmCrown = merge(fronds);
     G.palmCrown.computeVertexNormals();
 

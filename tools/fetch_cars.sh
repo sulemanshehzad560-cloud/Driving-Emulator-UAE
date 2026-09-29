@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Downloads the licensed hero-car models and packs them for phones:
-# textures resized to 1024 px WebP, geometry meshopt-compressed.
+# textures resized to 2048 px WebP, geometry meshopt-compressed.
 # These licences allow use inside the game but not re-hosting the raw files,
 # so CI fetches them from their public sources on every build.
+# Also builds light traffic versions next to it (<out-dir>/../traffic).
 # Usage: tools/fetch_cars.sh <out-dir>   (needs curl, python3, node/npx)
 set -euo pipefail
 OUT="${1:-game/public/cars}"
@@ -11,7 +12,7 @@ mkdir -p "$OUT"
 GT="npx --yes @gltf-transform/cli@4"
 
 pack() { # in out
-  $GT resize "$1" "$WORK/a.glb" --width 1024 --height 1024 >/dev/null
+  $GT resize "$1" "$WORK/a.glb" --width 2048 --height 2048 >/dev/null
   $GT webp "$WORK/a.glb" "$WORK/b.glb" >/dev/null
   $GT dedup "$WORK/b.glb" "$WORK/c.glb" >/dev/null
   $GT meshopt "$WORK/c.glb" "$2" >/dev/null
@@ -41,9 +42,26 @@ for u in uris:
 PY
 }
 for pair in "vortex:free_concept_car_025__-_public_domain_cc0" "nova:free_ai_based_conceptcar_049_public_domain_cc0" \
-            "zenith:free_ai_based_conceptcar_050_public_domain_cc0" "atlas:free_concept_car_006_-_public_domain_cc0"; do
+            "zenith:free_ai_based_conceptcar_050_public_domain_cc0" "atlas:free_concept_car_006_-_public_domain_cc0" \
+            "helix:free_concept_car_003_-_public_domain_cc0" "sable:free_concept_car_004_-_public_domain_cc0"; do
   name="${pair%%:*}"; folder="${pair#*:}"
   if fetch_gltf "$folder"; then pack "$WORK/$folder/scene.gltf" "$OUT/$name.glb" || echo "::warning::$name not packed"
   else echo "::warning::$name not downloaded — the game falls back to the procedural car"; fi
+done
+
+# traffic versions of the non-rigged models: simplified to ~45k triangles,
+# 1024 px textures (needs `npm ci` in game/ for the gltf-transform libraries)
+TRAFFIC="$(dirname "$OUT")/traffic"
+mkdir -p "$TRAFFIC"
+for name in concept vortex nova zenith; do
+  [ -f "$OUT/$name.glb" ] || continue
+  if node "$(dirname "$0")/../game/scripts/traffic-lods.mjs" "$OUT/$name.glb" "$WORK/lod.glb" 45000 +z \
+    && $GT resize "$WORK/lod.glb" "$WORK/lod-a.glb" --width 1024 --height 1024 >/dev/null \
+    && $GT webp "$WORK/lod-a.glb" "$WORK/lod-b.glb" >/dev/null \
+    && $GT meshopt "$WORK/lod-b.glb" "$TRAFFIC/hero-$name.glb" >/dev/null; then
+    echo "traffic/hero-$name.glb: $(du -h "$TRAFFIC/hero-$name.glb" | cut -f1)"
+  else
+    echo "::warning::traffic version of $name not built — procedural traffic car used instead"
+  fi
 done
 rm -rf "$WORK"
