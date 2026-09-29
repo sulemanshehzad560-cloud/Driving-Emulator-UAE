@@ -240,14 +240,16 @@ export class Environment {
       const rot = hdr.info.sunAz - sunWorldAz;
       this.scene.backgroundRotation.set(0, rot, 0);
       this.scene.environmentRotation.set(0, rot, 0);
-      const key = night > 0.6 ? 0.5 : 0.24;
-      this.exposure = THREE.MathUtils.clamp(key / Math.max(0.02, hdr.info.avgLum), 0.05, 6);
-      this.scene.backgroundIntensity = 1;
-      this.scene.environmentIntensity = night > 0.6 ? 1.6 : 0.8;
+      const key = night > 0.6 ? 0.12 : 0.24;
+      // night: never brighten the sky photo past ~1x, or light-polluted night skies wash the city out
+      this.exposure = THREE.MathUtils.clamp(key / Math.max(0.02, hdr.info.avgLum), 0.05, night > 0.6 ? 0.9 : 6);
+      this.scene.backgroundIntensity = night > 0.6 ? 0.8 : 1;
+      this.scene.environmentIntensity = night > 0.6 ? 0.35 : 0.8;
       const hc = hdr.info.horizon;
       const fog = new THREE.Color(hc[0], hc[1], hc[2]).multiplyScalar(0.85);
       const hz = new THREE.Color(...season.haze).multiplyScalar(fog.r * 0.3 + fog.g * 0.5 + fog.b * 0.2);
       fog.lerp(hz, 0.35);
+      if (night > 0.6) fog.multiplyScalar(0.3).lerp(new THREE.Color(0x0b1224), 0.5); // dark blue night haze
       this.scene.fog.color.copy(fog);
       this.sun.intensity = night > 0.6 ? 0.25 / this.exposure : Math.max(0.1, (2.2 + 1.2 * (1 - low)) * dayI) / Math.max(0.35, this.exposure * 0.9);
     } else {

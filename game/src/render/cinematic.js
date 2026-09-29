@@ -112,6 +112,22 @@ export const CinematicShader = {
     }`,
 };
 
+const SanitizeShader = {
+  uniforms: { tDiffuse: { value: null } },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    varying vec2 vUv;
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+      bvec4 bad = bvec4(c.r != c.r || c.r > 6.0e4, c.g != c.g || c.g > 6.0e4, c.b != c.b || c.b > 6.0e4, c.a != c.a);
+      if (any(bad)) c = vec4(0.0, 0.0, 0.0, 1.0);
+      gl_FragColor = vec4(min(c.rgb, vec3(512.0)), c.a);
+    }`,
+};
+
 /** Colour grades for the time of day / weather (applied after tone mapping). */
 export function gradeFor({ night, sunsetAmount, season }) {
   const g = {
@@ -157,6 +173,9 @@ export class CinematicPipeline {
         this.gtao = null;
       }
     }
+    // guard: a single NaN/Inf pixel (degenerate normals in a detailed model, half-float
+    // overflow on a hot emissive) would otherwise be smeared over the frame by bloom
+    this.composer.addPass(new ShaderPass(SanitizeShader));
     if (quality.bloom) {
       // HDR scene: only genuinely bright things (lamps, sun glints) should bloom
       this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.18, 0.35, 2.5);

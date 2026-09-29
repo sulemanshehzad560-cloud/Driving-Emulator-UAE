@@ -232,8 +232,8 @@ export class Game {
     const eye = this.interior.userData.eye;
     this.mirrors = [
       { key: 'rear', rt: mk(512, 160), cam: new THREE.PerspectiveCamera(38, 512 / 160, 0.3, 700), pos: new THREE.Vector3(0, eye.y + 0.15, 0.3), yaw: 0, rect: [0.36, 0.13, 0.28, 0.1] },
-      { key: 'left', rt: mk(300, 200), cam: new THREE.PerspectiveCamera(42, 1.5, 0.3, 600), pos: new THREE.Vector3(-st.W / 2 - 0.15, eye.y - 0.1, -0.7), yaw: -0.18, rect: [0.01, 0.24, 0.16, 0.2] },
-      { key: 'right', rt: mk(300, 200), cam: new THREE.PerspectiveCamera(42, 1.5, 0.3, 600), pos: new THREE.Vector3(st.W / 2 + 0.15, eye.y - 0.1, -0.7), yaw: 0.18, rect: [0.83, 0.24, 0.16, 0.2] },
+      { key: 'left', rt: mk(300, 200), cam: new THREE.PerspectiveCamera(42, 1.5, 0.3, 600), pos: new THREE.Vector3(-st.W / 2 - 0.15, eye.y - 0.1, -0.7), yaw: -0.18, rect: [0.01, 0.28, 0.16, 0.2] },
+      { key: 'right', rt: mk(300, 200), cam: new THREE.PerspectiveCamera(42, 1.5, 0.3, 600), pos: new THREE.Vector3(st.W / 2 + 0.15, eye.y - 0.1, -0.7), yaw: 0.18, rect: [0.83, 0.28, 0.16, 0.2] },
     ];
     this.overlay = new THREE.Scene();
     this.overlayCam = new THREE.OrthographicCamera(0, 1, 1, 0, -1, 1);
@@ -925,6 +925,7 @@ export class Game {
     // real-model cars have a modelled cabin: keep it and skip the generic one
     const own = !!this.car.userData.eye;
     document.getElementById('hud')?.classList.toggle('in-car', on && !own); // generic cabin shows speed + map on the dash
+    document.getElementById('hud')?.classList.toggle('cockpit-view', on); // side mirrors take the minimap's place
     this.interior.visible = on && !own;
     for (const o of this.exterior) o.visible = !on || own;
   }
