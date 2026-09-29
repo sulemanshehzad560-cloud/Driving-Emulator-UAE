@@ -13,4 +13,4 @@ android/.idea/
 game/public/world/
 game/public/art/
 physics/target/
-game/public/cars/
+game/public/cars/*.glb

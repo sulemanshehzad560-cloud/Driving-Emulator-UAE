@@ -54,10 +54,9 @@ jobs:
           curl -fsSL --retry 4 -o /tmp/art.tgz "$base/art-assets/art-assets.tar.gz"
           tar -xzf /tmp/art.tgz -C game/public
           ls game/public/art | head
-          mkdir -p game/public/cars
-          # open-licence car model (CC BY 4.0, Khronos glTF sample assets)
-          curl -fsSL --retry 4 -o game/public/cars/concept.glb \
-            https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/CarConcept/glTF-Binary/CarConcept.glb || echo "::warning::car model not downloaded — procedural car used"
+          # licensed hero-car models, packed for phones (the game falls back to procedural cars if any is missing)
+          tools/fetch_cars.sh game/public/cars || echo "::warning::some car models were not fetched"
+          ls -la game/public/cars
           echo "tiles: $(ls game/public/world/tiles | wc -l)"
           du -sh game/public/world game/public/art
 

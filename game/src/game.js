@@ -14,7 +14,7 @@ import { farTerrain } from './world/overview.js';
 import { buildCar, styleDims } from './cars/carFactory.js';
 import { buildInterior, drawCluster } from './cars/interior.js';
 import { loadCarModel, instantiateModelCar } from './cars/modelCars.js';
-import { carById } from './cars/catalog.js';
+import { TRAFFIC_TYPES, carById } from './cars/catalog.js';
 import { Vehicle } from './sim/vehicle.js';
 import { Traffic } from './sim/traffic.js';
 import { Input } from './sim/input.js';
@@ -120,7 +120,12 @@ export class Game {
     this.spawnPlayer(this.start.X, this.start.Z, this.start.heading);
 
     const density = this.settings.trafficDensity ?? 1;
-    this.traffic = new Traffic(this.graph, this.lights, this.scene, Math.round(q.traffic * density));
+    const trafficModels = new Map();
+    await Promise.all([...new Set(TRAFFIC_TYPES.filter((t) => t.model).map((t) => t.model))].map(async (url) => {
+      const tpl = await loadCarModel({ url });
+      if (tpl) trafficModels.set(url, tpl);
+    }));
+    this.traffic = new Traffic(this.graph, this.lights, this.scene, Math.round(q.traffic * density), trafficModels);
 
     // UI
     this.uiRoot = document.getElementById('game-ui');

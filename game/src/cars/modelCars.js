@@ -6,15 +6,17 @@
 // brake and indicator lamps and a repaintable body.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { styleDims, plateMaterial } from './carFactory.js';
 
 const templates = new Map();
-const loader = new GLTFLoader();
+const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder); // car models are meshopt-compressed
 
 /** Load (once) and return the parsed glTF scene for a model spec, or null if unavailable. */
 export function loadCarModel(model) {
   if (!templates.has(model.url)) {
-    templates.set(model.url, loader.loadAsync(model.url).then((g) => g.scene).catch((e) => {
+    templates.set(model.url, loader.loadAsync(model.url).then((g) => { g.scene.userData.animations = g.animations; return g.scene; }).catch((e) => {
       console.warn('[cars] model unavailable, using the procedural car:', model.url, e.message);
       return null;
     }));
@@ -25,15 +27,60 @@ export function loadCarModel(model) {
 const glassMat = new THREE.MeshPhysicalMaterial({ color: 0x0b1118, metalness: 0.1, roughness: 0.03, transparent: true, opacity: 0.55, clearcoat: 1, envMapIntensity: 1.6, depthWrite: false });
 
 function worldBox(obj, root) {
+  if (obj.userData.box) {
+    // proxy wheel: box kept in the model holder's frame, follows its scale/offset
+    const h = obj.userData.holder;
+    h.updateWorldMatrix(true, false);
+    const m = new THREE.Matrix4().copy(root.matrixWorld).invert().multiply(h.matrixWorld);
+    return obj.userData.box.clone().applyMatrix4(m);
+  }
   const b = new THREE.Box3();
   obj.updateWorldMatrix(true, true);
   const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
   obj.traverse((o) => {
-    if (!o.isMesh) return;
+    if (!o.isMesh || !o.visible) return;
     o.geometry.computeBoundingBox();
     b.union(o.geometry.boundingBox.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld)));
   });
   return b;
+}
+
+/**
+ * Find the four wheels of a model without named wheel nodes: tyre meshes (by
+ * material) grouped into corners, plus every small part (rim, disc, caliper)
+ * sitting inside each tyre. Returns [FL, FR, RL, RR] proxies in car space.
+ */
+function autoWheels(scene, car, holder, tireRe) {
+  const tires = [];
+  scene.traverse((o) => { if (o.isMesh && o.visible && tireRe.test(o.material?.name || '')) tires.push(o); });
+  if (tires.length < 4) return [null];
+  const all = worldBox(scene, car);
+  const mid = all.getCenter(new THREE.Vector3());
+  const corners = [[], [], [], []]; // car space: front = -z, left = -x
+  for (const t of tires) {
+    const c = worldBox(t, car).getCenter(new THREE.Vector3()); // classify in car space
+    corners[(c.z < mid.z ? 0 : 2) + (c.x < mid.x ? 0 : 1)].push(t);
+  }
+  if (corners.some((c) => !c.length)) return [null];
+  const meshes = [];
+  scene.traverse((o) => { if (o.isMesh && o.visible) meshes.push(o); });
+  return corners.map((list) => {
+    const box = new THREE.Box3(); // holder frame
+    for (const t of list) box.union(worldBox(t, holder));
+    const centre = box.getCenter(new THREE.Vector3());
+    const size0 = box.getSize(new THREE.Vector3());
+    const r = Math.max(size0.y, Math.min(size0.x, size0.z)) / 2;
+    const parts = meshes.filter((m) => {
+      const b = worldBox(m, holder);
+      const size = b.getSize(new THREE.Vector3());
+      return b.getCenter(new THREE.Vector3()).distanceTo(centre) < r * 0.9 && Math.max(size.x, size.y, size.z) < r * 2.3;
+    });
+    const proxy = new THREE.Group(); // stands in for a named wheel node: its box is the tyre box
+    proxy.userData.parts = parts;
+    proxy.userData.box = box;
+    proxy.userData.holder = holder;
+    return proxy;
+  });
 }
 
 /**
@@ -45,15 +92,32 @@ export function instantiateModelCar(spec, template, color) {
   const st = styleDims(spec.style);
   const car = new THREE.Group();
   const holder = new THREE.Group(); // model space -> car space
-  const scene = template.clone(true);
+  const scene = cloneSkinned(template);
   holder.add(scene);
+  // rigged parts (e.g. doors): freeze the clip at a chosen time, e.g. doors shut
+  if (cfg.pose) {
+    const clip = (template.userData.animations || []).find((c) => c.name === cfg.pose.clip) || template.userData.animations?.[0];
+    if (clip) {
+      const mixer = new THREE.AnimationMixer(scene);
+      mixer.clipAction(clip).play();
+      mixer.setTime(cfg.pose.time || 0);
+    }
+  }
+  scene.traverse((o) => { if (o.isSkinnedMesh) o.frustumCulled = false; });
   car.add(holder);
   if (cfg.front === '+z') holder.rotation.y = Math.PI;
   car.updateMatrixWorld(true);
 
+  // hide baked ground shadows and helper geometry before measuring anything
+  const hideMat = cfg.hideMat ? new RegExp(cfg.hideMat, 'i') : null;
+  if (hideMat) scene.traverse((o) => { if (o.isMesh && hideMat.test(o.material?.name || '')) o.visible = false; });
+  car.updateMatrixWorld(true);
+
   // wheel centres (car space) to scale and place the model
-  const names = cfg.wheels; // [FL, FR, RL, RR] node names
-  const wheelNodes = names.map((n) => scene.getObjectByName(n));
+  let wheelNodes;
+  if (cfg.tireMat) wheelNodes = autoWheels(scene, car, holder, new RegExp(cfg.tireMat, 'i'));
+  else wheelNodes = cfg.wheels.map((n) => scene.getObjectByName(n));
+  const names = cfg.wheels || ['FL', 'FR', 'RL', 'RR'];
   if (wheelNodes.some((w) => !w)) throw new Error('model wheels not found');
   const centres = wheelNodes.map((w) => worldBox(w, car).getCenter(new THREE.Vector3()));
   const radius = worldBox(wheelNodes[0], car).getSize(new THREE.Vector3()).y / 2;
@@ -129,7 +193,7 @@ export function instantiateModelCar(spec, template, color) {
     const spin = new THREE.Group();
     pivot.add(spin);
     spin.updateMatrixWorld(true);
-    const parts = [wheelNodes[i], ...(cfg.wheelParts || []).map((suffix) => scene.getObjectByName(n + suffix)).filter(Boolean)];
+    const parts = wheelNodes[i].userData.parts || [wheelNodes[i], ...(cfg.wheelParts || []).map((suffix) => scene.getObjectByName(n + suffix)).filter(Boolean)];
     for (const p of parts) {
       const still = /pad|caliper/i.test(p.name);
       (still ? pivot : spin).attach(p);
@@ -164,4 +228,36 @@ export function instantiateModelCar(spec, template, color) {
 
   car.userData = { eye, steer, wheels, brakeMat, headMat, drlMat: headMat, style: st, paint: bodyPaint, indicators, model: true, radius: radius * s };
   return car;
+}
+
+const trafficPaint = new Map();
+/** Light traffic car from a small model (one draw call per material, no shadows). */
+export function modelTrafficCar(template, paintMat, color) {
+  const g = new THREE.Group();
+  const h = template.clone(true);
+  h.rotation.y = Math.PI; // models face +z, cars face -z
+  g.add(h);
+  h.traverse((o) => {
+    if (!o.isMesh) return;
+    o.castShadow = false;
+    const n = o.material?.name || '';
+    if (paintMat && n === paintMat) {
+      const key = `${template.uuid}-${color}`;
+      if (!trafficPaint.has(key)) {
+        const m = o.material.clone();
+        m.color.set(color);
+        m.metalness = 0.45;
+        m.roughness = 0.32;
+        m.userData.isPaint = true;
+        trafficPaint.set(key, m);
+      }
+      o.material = trafficPaint.get(key);
+    } else if (n === 'Windows' && !o.material.userData.tuned) {
+      o.material.color.set(0x0c1118);
+      o.material.metalness = 0.3;
+      o.material.roughness = 0.08;
+      o.material.userData.tuned = true;
+    }
+  });
+  return g;
 }

@@ -28,7 +28,7 @@ later with OpenGL ES 3, which covers nearly every phone made since 2016.
 | **Maps** | **The whole UAE, offline**: about 50,000 streaming 1 km tiles with 545,000 roads and 680,000 buildings, covering all seven emirates including Abu Dhabi, Al Ain, Liwa and the western region. The world streams around you as you drive, so you can drive from Ruwais to Fujairah. There are 23 quick-start places, and you can also tap anywhere on the UAE map or use your GPS position. |
 | **Road rules** | Real traffic lights with phased junctions, stop lines, speed-limit signs, radars (flash at more than 20 km/h over the limit), Salik (Dubai) and Darb (Abu Dhabi) toll gates, fuel stations and rest areas. |
 | **Fines** | Based on UAE federal fine tables: red light AED 1,000 + 12 black points, speeding bands AED 300–3,000, not indicating AED 400, no headlights at night AED 500, collisions. There is also a road-safety course that clears black points. |
-| **Cars** | 10 cars, including the **Kaiser G 63 Night Edition** (round halo headlamps, slatted grille, fender-top indicators, side pipes, running boards, spare wheel) and the **Aurora Vision GT**, a fully modelled high-detail car with a real interior. Each has clear-coat paint, 5 colours, working lights, indicators and a turning steering wheel. Licensed models can be dropped in (see below). |
+| **Cars** | 14 player cars. Five are full high-detail 3D models: the **Aurora Vision GT** (with a real interior), **Vortex S**, **Nova GT**, **Zenith X** and **Atlas R Desert Rover**. There is also the procedural **Kaiser G 63 Night Edition** (round halo headlamps, slatted grille, fender-top indicators, side pipes, running boards, spare wheel) and more. Each has 5 colours and working lights and indicators. Traffic mixes Dubai/Abu Dhabi taxis, buses and public-domain (CC0) model cars. Licensed models can be dropped in (see below). |
 | **Cameras** | Chase, far chase, cockpit (interior with the live map on the centre screen), bonnet and cinematic. |
 | **Mirrors** | Rear-view mirror and left/right side mirrors show **live views** of the traffic behind you. You can show all three, the rear-view only, or none. |
 | **Controls** | Arrow buttons, an on-screen **steering wheel** or **gyroscope tilt**, chosen in Settings. Also gas and brake pedals, handbrake, horn and keyboard for PC testing. |
@@ -132,6 +132,7 @@ tools/
   uae_tiles.py        OpenStreetMap -> 1 km world tiles, overview graph, land mask
   build_world.sh      downloads the GCC extract and runs the tiler
   fetch_art.py        downloads the CC0 skies and PBR textures
+  fetch_cars.sh       downloads + packs the hero-car models (WebP textures, meshopt)
   e2e-test.mjs        end-to-end browser test with screenshots
 ```
 
@@ -157,3 +158,5 @@ Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright
 Radio directory: [radio-browser.info](https://www.radio-browser.info). 3D engine: [three.js](https://threejs.org) (MIT).
 Skies and textures: [Poly Haven](https://polyhaven.com) and [ambientCG](https://ambientcg.com) (CC0).
 Aurora Vision GT: “[Car Concept](https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/CarConcept)” by Eric Chadwick / Darmstadt Graphics Group, CC BY 4.0. Logos were removed and the materials were adapted for mobile.
+Vortex S / Nova GT / Zenith X / Atlas R: “FREE Concept Car 025 / AI ConceptCar 049 / 050 / Concept Car 006” by [Unity Fan](https://sketchfab.com/unityfan777). They are published free, with a Sketchfab licence that allows commercial use in games. CI downloads them at build time (`tools/fetch_cars.sh`) and does not re-host them.
+Traffic cars: [Quaternius “Cars Bundle”](https://quaternius.com/packs/cars.html), CC0.

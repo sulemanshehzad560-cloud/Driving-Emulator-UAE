@@ -45,6 +45,34 @@ export const CARS = [
     },
   },
   {
+    id: 'vortex-s', name: 'Vortex S Silverline', brand: 'VORTEX', cls: 'Hypercar', style: 'super',
+    price: 30000, topSpeed: 340, accel: 2.5, handling: 0.94, braking: 0.94, grip: 0.94, mass: 1450,
+    paints: [0xc9ccd1, 0x0b0b0c, 0xb3121e, 0x1b3a8a, 0xf2b705],
+    // "FREE Concept Car 025" by Unity Fan (Sketchfab, free licence for use in games)
+    model: { url: 'cars/vortex.glb', front: '+z', tireMat: 'rubber|tire', paint: ['body_color_supra.002'], head: 'light', brake: 'taillights', hideMat: 'shadow' },
+  },
+  {
+    id: 'nova-gt', name: 'Nova GT Coupé', brand: 'NOVA', cls: 'Grand Tourer', style: 'gt',
+    price: 16000, topSpeed: 310, accel: 3.4, handling: 0.87, braking: 0.88, grip: 0.88, mass: 1640,
+    paints: [0x8fb4e3, 0xe8e8ea, 0x0b0b0c, 0x7a0f14, 0x2f4f3a],
+    // "FREE AI based ConceptCar 049" by Unity Fan (Sketchfab, free licence for use in games)
+    model: { url: 'cars/nova.glb', front: '+z', tireMat: 'rubber|tire', paint: ['silver'], glass: 'glass', signal: 'turnlights', brake: 'taillights_cover', hideMat: 'shadow' },
+  },
+  {
+    id: 'zenith-x', name: 'Zenith X Track Edition', brand: 'ZENITH', cls: 'Track Hypercar', style: 'hyper',
+    price: 40000, topSpeed: 355, accel: 2.4, handling: 0.95, braking: 0.95, grip: 0.95, mass: 1390,
+    paints: [0x2dd4bf, 0xff4d00, 0xe8e8ea, 0x7c3aed, 0x0b0b0c],
+    // "FREE AI based ConceptCar 050" by Unity Fan (Sketchfab, free licence for use in games)
+    model: { url: 'cars/zenith.glb', front: '+z', tireMat: 'rubber|tire', paint: ['body'], glass: 'glass', head: 'lights', brake: 'taillights', hideMat: 'shadow' },
+  },
+  {
+    id: 'atlas-r', name: 'Atlas R Desert Rover', brand: 'ATLAS', cls: 'Off-road Concept', style: 'suv',
+    price: 14000, topSpeed: 250, accel: 4.2, handling: 0.72, braking: 0.8, grip: 0.82, mass: 2300,
+    paints: [0xd4001a, 0x0b0b0c, 0xf2f2f2, 0x0a84ff, 0xffb000],
+    // "FREE Concept Car 006" by Unity Fan (Sketchfab, free licence for use in games)
+    model: { url: 'cars/atlas.glb', front: '+z', pose: { clip: 'Armature|ArmatureAction', time: 0 }, tireMat: 'wheel_nitto|rubber', paint: ['body'], glass: 'glass', head: 'headlights', brake: 'taillights_cover', hideMat: 'shadow' },
+  },
+  {
     id: 'falcon-gt', name: 'Falcon Desert GT', brand: 'FALCON', cls: 'Supercar', style: 'super',
     price: 20000, topSpeed: 330, accel: 2.9, handling: 0.9, braking: 0.92, grip: 0.92, mass: 1480,
     paints: [0xff5a00, 0x0f5132, 0xffffff, 0x101820, 0x9b111e],
@@ -73,6 +101,13 @@ export const TRAFFIC_TYPES = [
   { style: 'boxy', paints: [0xffffff, 0x151515, 0x4e5a3a], weight: 1 },
   { style: 'g63', paints: [0x0b0b0c, 0xf2f2f2, 0x2b2e31], weight: 1 },
   { style: 'pickup', paints: [0xffffff, 0xd9d9d9, 0x8a8a8a], weight: 2 },
+  // Quaternius "Cars Bundle" (CC0) models: lighter and more varied than the procedural shapes
+  { style: 'sedan', model: 'traffic/family-sedan.glb', paintMat: 'Blue', len: 4.2, paints: [0xffffff, 0xc0c0c0, 0x1c1c1c, 0x8c8c8c, 0x1b2a41, 0x7a0e0e], weight: 6 },
+  { style: 'suv', model: 'traffic/suv.glb', paintMat: 'White', len: 4.3, paints: [0xffffff, 0x1c1c1c, 0xb9bcc0, 0x6b5b45, 0x0e1a2e], weight: 5 },
+  { style: 'sedan', model: 'traffic/compact-wagon.glb', paintMat: 'LightBlue', len: 4.1, paints: [0xffffff, 0xd9d9d9, 0x5a6b7a, 0x9b1b1b], weight: 3 },
+  { style: 'coupe', model: 'traffic/sport-coupe.glb', paintMat: 'White', len: 4.0, paints: [0xffffff, 0xd4001a, 0x101010, 0x0c2a66], weight: 1 },
+  { style: 'coupe', model: 'traffic/sports-car.glb', paintMat: 'Orange', len: 4.0, paints: [0xff6a00, 0xffd400, 0x1a1a1a, 0xe10600], weight: 1 },
+  { style: 'pickup', model: 'traffic/pickup-truck.glb', len: 5.0, paints: [0xffffff], weight: 2 },
   { style: 'van', paints: [0xffffff, 0xe6e6e6, 0xf1e3c2], weight: 2 },
   { style: 'coupe', paints: [0xd4001a, 0x0c2a66, 0x101010, 0xffd400], weight: 1 },
   { style: 'bus', paints: [0xd6001c], weight: 0.6, big: true },

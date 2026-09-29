@@ -396,6 +396,8 @@ function renderTab(t) {
         <p>Map data © <b>OpenStreetMap</b> contributors, ODbL 1.0.</p>
         <p>Skies and surface textures: <b>Poly Haven</b> and <b>ambientCG</b> (CC0).</p>
         <p>Aurora Vision GT model: “Car Concept” by Eric Chadwick / Darmstadt Graphics Group, CC BY 4.0 — logos removed, materials adapted for mobile.</p>
+        <p>Vortex S, Nova GT, Zenith X and Atlas R: free concept-car models by <b>Unity Fan</b> (Sketchfab), optimised for phones.</p>
+        <p>Traffic cars: “Cars Bundle” by <b>Quaternius</b> (CC0).</p>
         <p>All other vehicles are original designs, not affiliated with any manufacturer.</p>
       </div>
       <p class="note">Tip: 1080p and Ultra look best on flagship phones. Auto resolution adapts to keep driving smooth.</p>

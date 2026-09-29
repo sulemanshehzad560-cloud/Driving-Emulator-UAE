@@ -2,6 +2,7 @@
 // slow for bends, obey traffic lights and stop signs, and are recycled
 // around the player. Density follows the road class (busier on motorways).
 import { buildTrafficCar, styleDims } from '../cars/carFactory.js';
+import { modelTrafficCar } from '../cars/modelCars.js';
 import { TRAFFIC_TYPES } from '../cars/catalog.js';
 import { lanesPerDirection } from '../world/graph.js';
 
@@ -18,7 +19,7 @@ export function regionAt(X) {
 }
 
 export class Traffic {
-  constructor(graph, lights, scene, count) {
+  constructor(graph, lights, scene, count, templates = new Map()) {
     this.graph = graph;
     this.lights = lights;
     this.scene = scene;
@@ -29,11 +30,12 @@ export class Traffic {
     for (let i = 0; i < pool; i++) {
       const t = pickType((i * 0.61803398875) % 1);
       const color = t.paints[i % t.paints.length];
-      const mesh = buildTrafficCar(t.style, color, !!t.taxi, t.taxiRoof);
+      const tpl = t.model && templates.get(t.model);
+      const mesh = tpl ? modelTrafficCar(tpl, t.paintMat, color) : buildTrafficCar(t.style, color, !!t.taxi, t.taxiRoof);
       mesh.visible = false;
       scene.add(mesh);
       const dims = styleDims(t.style);
-      this.cars.push({ mesh, type: t, len: dims.L, edge: null, s: 0, speed: 0, lane: 0, active: false, heading: 0, x: 0, z: 0 });
+      this.cars.push({ mesh, type: t, len: (tpl && t.len) || dims.L, edge: null, s: 0, speed: 0, lane: 0, active: false, heading: 0, x: 0, z: 0 });
     }
     this.activeTarget = count;
   }
