@@ -10,12 +10,12 @@ fuel stations are built from OpenStreetMap data.
 
 Every push to GitHub runs the **Build APK** workflow (`.github/workflows/build-apk.yml`), which:
 
-1. downloads the ten bundled city packs from OpenStreetMap,
-2. builds the game,
-3. plays through it end to end in headless Chromium (splash, login, garage, settings, city loading, driving, lights, mirrors, map/GPS, radio, AC, red-light fine, steering modes, pause) and saves screenshots,
-4. builds the APK,
+1. downloads the full-UAE world data (release `world-data`, rebuilt weekly from OpenStreetMap by `world.yml`), the CC0 skies/textures (release `art-assets`) and the open-licence car model,
+2. builds the Rust physics core and the game,
+3. plays through it end to end in headless Chromium in Dubai and Abu Dhabi (splash, disclaimer, sign-in, every home tab, loading, driving, steering, braking, lights, indicators, cockpit mirrors, GPS route, radio, climate, pause, quit — 18 checks) and saves screenshots,
+4. builds the APK **and** the Play Store bundle (`.aab`),
 5. installs and launches the APK on an Android emulator and checks for crashes,
-6. publishes the APK under **Releases** (`UAE-Drive-v1.0.<build>.apk`).
+6. publishes both under **Releases** (`UAE-Drive-v2.0.<build>.apk` / `.aab`).
 
 To install it on your phone, open the release page there, download the `.apk`,
 and allow "Install unknown apps" when Android asks. You need Android 7.0 or
@@ -25,10 +25,10 @@ later with OpenGL ES 3, which covers nearly every phone made since 2016.
 
 | Area | What you get |
 | --- | --- |
-| **Maps** | 10 offline city packs across all 7 emirates: Downtown Dubai, Marina/JBR, Deira, Abu Dhabi, Al Ain, Sharjah, Ajman, Umm Al Quwain, Ras Al Khaimah and Fujairah. **Explore anywhere** downloads live roads around any landmark, coordinates or your GPS position. Where the map has too few roads, generated roads fill the area. |
+| **Maps** | **The whole UAE, offline**: about 50,000 streaming 1 km tiles with 545,000 roads and 680,000 buildings, covering all seven emirates including Abu Dhabi, Al Ain, Liwa and the western region. The world streams around you as you drive, so you can drive from Ruwais to Fujairah. There are 23 quick-start places, and you can also tap anywhere on the UAE map or use your GPS position. |
 | **Road rules** | Real traffic lights with phased junctions, stop lines, speed-limit signs, radars (flash at more than 20 km/h over the limit), Salik (Dubai) and Darb (Abu Dhabi) toll gates, fuel stations and rest areas. |
 | **Fines** | Based on UAE federal fine tables: red light AED 1,000 + 12 black points, speeding bands AED 300–3,000, not indicating AED 400, no headlights at night AED 500, collisions. There is also a road-safety course that clears black points. |
-| **Cars** | 8 fictional cars: luxury saloon, coupé, G-Line 4x4 (G-Wagon-style), grand SUV, GT, two supercars and a hypercar. Each has clear-coat paint, 5 colours, working lights, indicators, reverse lights and a steering wheel. |
+| **Cars** | 10 cars, including the **Kaiser G 63 Night Edition** (round halo headlamps, slatted grille, fender-top indicators, side pipes, running boards, spare wheel) and the **Aurora Vision GT**, a fully modelled high-detail car with a real interior. Each has clear-coat paint, 5 colours, working lights, indicators and a turning steering wheel. Licensed models can be dropped in (see below). |
 | **Cameras** | Chase, far chase, cockpit (interior with the live map on the centre screen), bonnet and cinematic. |
 | **Mirrors** | Rear-view mirror and left/right side mirrors show **live views** of the traffic behind you. You can show all three, the rear-view only, or none. |
 | **Controls** | Arrow buttons, an on-screen **steering wheel** or **gyroscope tilt**, chosen in Settings. Also gas and brake pedals, handbrake, horn and keyboard for PC testing. |
@@ -64,13 +64,15 @@ project.
   is missing, the game uses UAE default limits (motorway 120, trunk 100,
   primary 80, secondary 60, residential 40) and places radars, tolls and fuel
   stations by rule.
-* **The whole UAE can't load at once on a phone.** The game loads about
-  3 km × 3 km at a time. The bundled packs cover the main city centres, and
-  *Explore anywhere* loads any other spot on demand. Downloaded areas are cached
-  for offline use.
+* **The whole UAE ships inside the app** (about 90 MB compressed). The phone
+  only keeps the tiles around the car in memory, so any Android phone can
+  stream it.
 * **Real car brands need a licence.** Mercedes-Benz and the other brand names,
-  logos and exact designs are trademarks. The cars here are original designs
-  inspired by those classes. Licensed models can be added later.
+  logos and exact designs are protected. Free "real car" models found online are
+  almost always ripped from other games or shared without the maker's licence,
+  and shipping them gets apps removed from Google Play. The cars here are
+  original designs, plus one open-licence (CC BY 4.0) model. To add licensed
+  models, see *Adding real 3D car models* below.
 * **No music is bundled.** Hollywood and Bollywood songs are copyrighted, so the
   radio streams public stations and *My Music* plays files you own.
 * **Instagram login no longer exists for apps.** Meta shut down the Instagram
@@ -95,19 +97,41 @@ Play Games also needs the APK's signing-key SHA-1 registered in Play Console.
 Facebook needs the package name `ae.uaedrive.game` and the key hash added in
 the Facebook app settings.
 
+## Adding real 3D car models
+
+Any glTF/GLB car can be dropped in, for example one bought with a game licence
+from a model store, or supplied by a manufacturer licensing programme.
+
+1. Put the file in `game/public/cars/` (for example `g63.glb`).
+2. Add a `model` block to the car in `game/src/cars/catalog.js`, as the
+   `aurora-vision` entry does. It needs the wheel node names (`FL, FR, RL, RR`),
+   the body-paint material names, and the glass, head/brake/indicator and
+   number-plate material names.
+
+The loader in `src/cars/modelCars.js` does the rest:
+* scales and aligns the model to the physics car,
+* makes the wheels spin and steer,
+* drives the lights and indicators from the game,
+* repaints the body in the chosen colours,
+* uses the model's own interior for the cockpit view.
+
 ## Project layout
 
 ```
 game/                 WebGL game (Three.js + Vite)
-  src/world/          OSM converter, road graph, 3D city builder, signals, radars/tolls
-  src/cars/           procedural car models, cockpit, catalogue
+  src/world/          tile streamer + Web Worker tile builder, dynamic road graph,
+                      nationwide GPS overview, signals, radars/tolls, props
+  src/cars/           procedural cars, GLB model cars, cockpit, catalogue
   src/sim/            vehicle physics, AI traffic, controls (arrows / wheel / tilt)
-  src/render/         sky, seasons, weather, quality presets, textures
+  src/render/         HDRI sky, seasons, weather, PBR materials/shaders, probes, post FX
+  src/ui/             showroom, UAE map picker, icons, achievements
   src/hud/            speedometer, minimap, GPS map, radio + AC panels
   src/audio/          synthesised engine/indicator sounds, radio & music player
 android/              Android app: full-screen WebView, sign-in bridge, file picker, GPS
 tools/
-  fetch-uae-maps.mjs  downloads the city packs from OpenStreetMap
+  uae_tiles.py        OpenStreetMap -> 1 km world tiles, overview graph, land mask
+  build_world.sh      downloads the GCC extract and runs the tiler
+  fetch_art.py        downloads the CC0 skies and PBR textures
   e2e-test.mjs        end-to-end browser test with screenshots
 ```
 
@@ -115,9 +139,11 @@ tools/
 
 ```bash
 cd game && npm ci
-node ../tools/fetch-uae-maps.mjs    # optional: offline city packs
+# world + art from the releases (or build them: tools/build_world.sh, tools/fetch_art.py)
+curl -L https://github.com/<owner>/<repo>/releases/download/world-data/world-data.tar.gz | tar -xz -C public
+curl -L https://github.com/<owner>/<repo>/releases/download/art-assets/art-assets.tar.gz | tar -xz -C public
 npm run build                       # outputs into android/app/src/main/assets/www
-node ../tools/e2e-test.mjs ../android/app/src/main/assets/www ../e2e-shots
+node ../tools/e2e-test.mjs ../android/app/src/main/assets/www ../e2e-shots downtown low
 cd ../android && ./gradlew assembleRelease   # needs the Android SDK
 ```
 
@@ -129,3 +155,5 @@ C camera, M map, N horn, Esc pause.
 
 Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), ODbL 1.0.
 Radio directory: [radio-browser.info](https://www.radio-browser.info). 3D engine: [three.js](https://threejs.org) (MIT).
+Skies and textures: [Poly Haven](https://polyhaven.com) and [ambientCG](https://ambientcg.com) (CC0).
+Aurora Vision GT: “[Car Concept](https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/CarConcept)” by Eric Chadwick / Darmstadt Graphics Group, CC BY 4.0. Logos were removed and the materials were adapted for mobile.

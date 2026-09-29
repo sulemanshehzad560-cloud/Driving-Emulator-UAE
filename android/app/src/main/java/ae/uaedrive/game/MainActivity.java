@@ -14,6 +14,7 @@ import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
 import android.webkit.GeolocationPermissions;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -97,6 +98,19 @@ public class MainActivity extends Activity {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 return loader.shouldInterceptRequest(request.getUrl());
+            }
+
+            @Override
+            @android.annotation.TargetApi(26)
+            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                // the renderer was killed (usually low memory on big maps): rebuild instead of crashing
+                Log.w(TAG, "WebView renderer gone, restarting the activity");
+                try {
+                    ((android.view.ViewGroup) view.getParent()).removeView(view);
+                    view.destroy();
+                } catch (Exception ignored) { }
+                recreate();
+                return true;
             }
 
             @Override

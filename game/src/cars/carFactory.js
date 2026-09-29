@@ -653,7 +653,8 @@ export function styleDims(style) {
   const st = STYLES[style] || STYLES.sedan;
   const roof = Math.max(...st.cabin.map((p) => p[1]));
   const screenBase = st.cabin[st.cabin.length - 1];
-  return { L: st.L, W: st.W, wheelbase: st.axleF - st.axleR, belt: st.cabin[0][1], roof, screenZ: -screenBase[0], screenY: screenBase[1] };
+  const roofFront = st.cabin[st.cabin.length - 2];
+  return { roofFrontZ: -roofFront[0], L: st.L, W: st.W, axleF: st.axleF, axleR: st.axleR, wheelR: st.wheelR, wheelbase: st.axleF - st.axleR, belt: st.cabin[0][1], roof, screenZ: -screenBase[0], screenY: screenBase[1] };
 }
 
 // ---- cheap traffic cars: every part merged into one mesh per material ----
@@ -693,4 +694,9 @@ export function buildTrafficCar(style, color, taxi = false, taxiRoof = 0xc8102e)
     g.add(m);
   }
   return g;
+}
+
+/** UAE number-plate material, shared with the model cars. */
+export function plateMaterial() {
+  return M.plate();
 }

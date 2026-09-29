@@ -13,6 +13,7 @@ import { Props } from './world/props.js';
 import { farTerrain } from './world/overview.js';
 import { buildCar, styleDims } from './cars/carFactory.js';
 import { buildInterior, drawCluster } from './cars/interior.js';
+import { loadCarModel, instantiateModelCar } from './cars/modelCars.js';
 import { carById } from './cars/catalog.js';
 import { Vehicle } from './sim/vehicle.js';
 import { Traffic } from './sim/traffic.js';
@@ -105,7 +106,14 @@ export class Game {
     // player car
     this.spec = carById(this.profile.selected);
     const paint = this.profile.paints[this.spec.id] ?? this.spec.paints[0];
-    this.car = buildCar({ style: this.spec.style, color: paint, detail: true, quality: this.qualityKey === 'low' ? 'low' : 'high' });
+    this.car = null;
+    if (this.spec.model && this.qualityKey !== 'low') {
+      const tpl = await loadCarModel(this.spec.model);
+      if (tpl) {
+        try { this.car = instantiateModelCar(this.spec, tpl, paint); } catch (e) { console.warn('[cars]', e.message); }
+      }
+    }
+    if (!this.car) this.car = buildCar({ style: this.spec.style, color: paint, detail: true, quality: this.qualityKey === 'low' ? 'low' : 'high' });
     this.scene.add(this.car);
     this.player = new Vehicle(this.spec);
     this.addLights();
@@ -908,14 +916,17 @@ export class Game {
     this.headlight.angle = this.lightsOn === 2 ? 0.6 : 0.5;
     this.setCockpit(this.cameraMode === 'cockpit');
     if (this.interior.visible) this.interior.userData.wheel.rotation.z = -p.steer * 5;
+    if (this.cockpitOn && this.car.userData.steer) this.car.userData.steer(-p.steer * 5);
   }
 
   setCockpit(on) {
     if (this.cockpitOn === on) return;
     this.cockpitOn = on;
-    document.getElementById('hud')?.classList.toggle('in-car', on);
-    this.interior.visible = on;
-    for (const o of this.exterior) o.visible = !on;
+    // real-model cars have a modelled cabin: keep it and skip the generic one
+    const own = !!this.car.userData.eye;
+    document.getElementById('hud')?.classList.toggle('in-car', on && !own); // generic cabin shows speed + map on the dash
+    this.interior.visible = on && !own;
+    for (const o of this.exterior) o.visible = !on || own;
   }
 
   drawCarScreen() {
@@ -949,7 +960,7 @@ export class Game {
     const sx = (Math.random() - 0.5) * shake * 0.3, sy = (Math.random() - 0.5) * shake * 0.3;
     this.car.updateMatrixWorld(true);
     if (mode === 'cockpit' || mode === 'hood') {
-      const eye = this.interior.userData.eye;
+      const eye = this.car.userData.eye || this.interior.userData.eye;
       const local = mode === 'cockpit' ? eye.clone() : new THREE.Vector3(0, eye.y + 0.05, -1.2);
       const world = local.clone().applyMatrix4(this.car.matrixWorld);
       cam.position.set(world.x + sx, world.y + sy, world.z);

@@ -34,6 +34,17 @@ export const CARS = [
     paints: [0x0a0a0a, 0xf7c600, 0x3a4a5c, 0xe8e8e8, 0x16632f],
   },
   {
+    id: 'aurora-vision', name: 'Aurora Vision GT', brand: 'AURORA', cls: 'Electric Hypercar', style: 'super',
+    price: 26000, topSpeed: 325, accel: 2.6, handling: 0.93, braking: 0.93, grip: 0.93, mass: 1690,
+    paints: [0xa3101c, 0x0b0b0c, 0xe8e8ea, 0x1d3f8f, 0xd9a400],
+    // full 3D model: "Car Concept" by Eric Chadwick / Darmstadt Graphics Group, CC BY 4.0 (logos removed)
+    model: {
+      url: 'cars/concept.glb', front: '+z', wheels: ['WheelFrontL', 'WheelFrontR', 'WheelRearL', 'WheelRearR'],
+      wheelParts: ['Rim', 'BrakeDisc', 'BrakePad'], paint: ['Paint 1 Carmine'], glass: 'Glass',
+      head: 'Headlight', brake: 'Brakelight', signal: 'Signallight', plate: 'License', plain: ['Tireside'], hide: ['InteriorSteeringEmblem'], steering: '^InteriorSteering(Wheel|Handle|Emblem)',
+    },
+  },
+  {
     id: 'falcon-gt', name: 'Falcon Desert GT', brand: 'FALCON', cls: 'Supercar', style: 'super',
     price: 20000, topSpeed: 330, accel: 2.9, handling: 0.9, braking: 0.92, grip: 0.92, mass: 1480,
     paints: [0xff5a00, 0x0f5132, 0xffffff, 0x101820, 0x9b111e],

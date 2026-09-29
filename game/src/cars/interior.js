@@ -56,7 +56,7 @@ export function buildInterior(style, mapCanvas, paint) {
 
   const W = d.W - 0.16;
   const belt = d.belt;
-  const eyeY = belt + (tall ? 0.34 : 0.25);
+  const eyeY = Math.min(belt + (tall ? 0.34 : 0.25), d.roof - 0.17); // low sports cars: sit lower, head under the roof
   const eyeZ = d.screenZ + 1.3; // driver sits ~1.3 m behind the windscreen base
   const lipZ = eyeZ - 0.62; // rear edge of the dashboard
   const dashTopY = belt - 0.02;
@@ -184,7 +184,7 @@ export function buildInterior(style, mapCanvas, paint) {
     trimLine.position.set(s * (W / 2 - 0.03), belt - 0.06, eyeZ - 0.15);
     g.add(trimLine);
     // A-pillar from the windscreen base up to the roof edge, leaning back towards the driver
-    const baseZ = d.screenZ + 0.02, topZ = d.screenZ + 0.72;
+    const baseZ = d.screenZ + 0.02, topZ = Math.max(d.roofFrontZ, d.screenZ + 0.3);
     const len = Math.hypot(roofY - belt, topZ - baseZ);
     const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.075, len, 0.09), lining);
     pillar.position.set(s * (W / 2 - 0.03), (belt + roofY) / 2, (baseZ + topZ) / 2);
@@ -195,7 +195,7 @@ export function buildInterior(style, mapCanvas, paint) {
     g.add(pillarB);
   }
   const head = new THREE.Mesh(new THREE.BoxGeometry(W, 0.03, 1.6), lining);
-  head.position.set(0, roofY, d.screenZ + 0.72 + 0.8);
+  head.position.set(0, roofY, Math.max(d.roofFrontZ, d.screenZ + 0.3) + 0.8);
   g.add(head);
   // rear-view mirror
   const rvm = new THREE.Group();
@@ -203,7 +203,7 @@ export function buildInterior(style, mapCanvas, paint) {
   const rvmStem = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.07, 8), piano);
   rvmStem.position.y = 0.06;
   rvm.add(rvmBody, rvmStem);
-  rvm.position.set(0, roofY - 0.1, d.screenZ + 0.74);
+  rvm.position.set(0, roofY - 0.1, Math.max(d.roofFrontZ, d.screenZ + 0.3) + 0.04);
   g.add(rvm);
 
   g.userData = { wheel, eye: new THREE.Vector3(-0.37, eyeY, eyeZ), screenTex, clusterCanvas, clusterTex, rvm };

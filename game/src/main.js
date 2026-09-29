@@ -250,7 +250,7 @@ let driveMode = 'free';
 function ensureGarage() {
   if (!garage) garage = window.__garage = new Garage(renderer);
   const spec = carById(garage.previewId || profile.selected);
-  garage.show(spec.style, profile.paints[spec.id] ?? spec.paints[0]);
+  garage.show(spec, profile.paints[spec.id] ?? spec.paints[0]);
 }
 
 function dailyReward() {
@@ -392,6 +392,12 @@ function renderTab(t) {
         <label class="row"><input type="checkbox" data-check="dynamicTime" ${s.dynamicTime ? 'checked' : ''}> Day/night cycle while driving</label>
         <label class="row"><input type="checkbox" data-check="showFps" ${s.showFps ? 'checked' : ''}> Show FPS counter</label>
       </div>
+      <div class="set-group credits"><h4>${icon('info')} About & credits</h4>
+        <p>Map data © <b>OpenStreetMap</b> contributors, ODbL 1.0.</p>
+        <p>Skies and surface textures: <b>Poly Haven</b> and <b>ambientCG</b> (CC0).</p>
+        <p>Aurora Vision GT model: “Car Concept” by Eric Chadwick / Darmstadt Graphics Group, CC BY 4.0 — logos removed, materials adapted for mobile.</p>
+        <p>All other vehicles are original designs, not affiliated with any manufacturer.</p>
+      </div>
       <p class="note">Tip: 1080p and Ultra look best on flagship phones. Auto resolution adapts to keep driving smooth.</p>
     </section>`;
 }
@@ -447,7 +453,7 @@ function bindTab(t) {
       const c = CARS[cur()];
       profile.paints[c.id] = +el.dataset.paint;
       saveProfile();
-      garage.show(c.style, +el.dataset.paint);
+      garage.show(c, +el.dataset.paint);
       screens.querySelectorAll('[data-paint]').forEach((b) => b.classList.toggle('on', b === el));
     });
     click('[data-buy]', () => {

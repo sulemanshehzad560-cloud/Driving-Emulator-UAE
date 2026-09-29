@@ -55,7 +55,7 @@ android {
 
     // the web game is large; keep assets uncompressed for fast loading
     androidResources {
-        noCompress += ['json', 'js']
+        noCompress += ['wasm']
     }
 }
 

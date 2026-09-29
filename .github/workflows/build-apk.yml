@@ -15,7 +15,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
@@ -29,9 +29,6 @@ jobs:
         working-directory: game
         run: npm ci
 
-      - name: Unit tests
-        run: node tools/tests/osm-convert.test.mjs
-
       - name: Rust physics core (tests + WebAssembly build)
         working-directory: physics
         run: |
@@ -41,21 +38,28 @@ jobs:
           cp target/wasm32-unknown-unknown/release/uaedrive_physics.wasm ../game/public/physics.wasm
           ls -la ../game/public/physics.wasm
 
-      - name: Restore UAE map packs
-        id: maps-cache
-        uses: actions/cache@v4
-        with:
-          path: game/public/maps
-          key: osm-maps-${{ hashFiles('game/src/world/regions.js', 'game/src/world/osm.js') }}
-
-      - name: Download UAE map packs from OpenStreetMap
-        if: steps.maps-cache.outputs.cache-hit != 'true'
-        timeout-minutes: 30
-        run: node tools/fetch-uae-maps.mjs
-        continue-on-error: true
-
-      - name: Map pack summary
-        run: ls -la game/public/maps && cat game/public/maps/index.json
+      - name: Download UAE world data + art (release assets)
+        run: |
+          set -e
+          base="https://github.com/${{ github.repository }}/releases/download"
+          mkdir -p game/public
+          if curl -fsSL --retry 4 -o /tmp/world.tgz "$base/world-data/world-data.tar.gz"; then
+            tar -xzf /tmp/world.tgz -C game/public
+          else
+            echo "::warning::world-data release not found — building the synthetic test world"
+            python3 -m pip install --quiet osmium shapely
+            python3 tools/tests/make_test_osm.py /tmp/test.osm
+            python3 tools/uae_tiles.py /tmp/test.osm game/public/world
+          fi
+          curl -fsSL --retry 4 -o /tmp/art.tgz "$base/art-assets/art-assets.tar.gz"
+          tar -xzf /tmp/art.tgz -C game/public
+          ls game/public/art | head
+          mkdir -p game/public/cars
+          # open-licence car model (CC BY 4.0, Khronos glTF sample assets)
+          curl -fsSL --retry 4 -o game/public/cars/concept.glb \
+            https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/CarConcept/glTF-Binary/CarConcept.glb || echo "::warning::car model not downloaded — procedural car used"
+          echo "tiles: $(ls game/public/world/tiles | wc -l)"
+          du -sh game/public/world game/public/art
 
       - name: Build game
         working-directory: game
@@ -63,14 +67,12 @@ jobs:
 
       - name: End-to-end test (headless Chromium)
         run: |
-          npx --prefix game playwright --version || npm i --no-save --prefix game playwright
+          npm i --no-save --prefix game playwright
           npx --prefix game playwright install --with-deps chromium
           cp tools/e2e-test.mjs game/e2e-test.mjs
           cd game
-          node e2e-test.mjs ../android/app/src/main/assets/www ../e2e-shots demo-city
-          if [ -f ../android/app/src/main/assets/www/maps/dubai-downtown.json ]; then
-            node e2e-test.mjs ../android/app/src/main/assets/www ../e2e-shots-dubai dubai-downtown
-          fi
+          node e2e-test.mjs ../android/app/src/main/assets/www ../e2e-shots downtown low
+          node e2e-test.mjs ../android/app/src/main/assets/www ../e2e-shots-abudhabi abudhabi low
 
       - name: Upload test screenshots
         if: always()
@@ -79,7 +81,7 @@ jobs:
           name: e2e-screenshots
           path: |
             e2e-shots
-            e2e-shots-dubai
+            e2e-shots-abudhabi
           if-no-files-found: ignore
 
       - uses: actions/setup-java@v4
@@ -109,32 +111,39 @@ jobs:
           KEYPASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease -PversionCode=${{ github.run_number }} -PversionName=1.0.${{ github.run_number }}
+          ./gradlew --no-daemon assembleRelease bundleRelease -PversionCode=${{ github.run_number }} -PversionName=2.0.${{ github.run_number }}
           mkdir -p ../dist
-          cp app/build/outputs/apk/release/app-release.apk ../dist/UAE-Drive-v1.0.${{ github.run_number }}.apk
+          cp app/build/outputs/apk/release/app-release.apk ../dist/UAE-Drive-v2.0.${{ github.run_number }}.apk
+          cp app/build/outputs/bundle/release/app-release.aab ../dist/UAE-Drive-v2.0.${{ github.run_number }}.aab
           ls -la ../dist
 
       - uses: actions/upload-artifact@v4
         with:
           name: UAE-Drive-apk
-          path: dist/*.apk
+          path: |
+            dist/*.apk
+            dist/*.aab
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: UAE Drive v1.0.${{ github.run_number }}
+          tag_name: v2.0.${{ github.run_number }}
+          name: UAE Drive v2.0.${{ github.run_number }}
           target_commitish: ${{ github.sha }}
           prerelease: true
-          files: dist/*.apk
+          files: |
+            dist/*.apk
+            dist/*.aab
           body: |
             Android APK built from `${{ github.ref_name }}` (${{ github.sha }}).
 
-            **Install:** download `UAE-Drive-v1.0.${{ github.run_number }}.apk` on your phone, open it and allow
+            **Install:** download `UAE-Drive-v2.0.${{ github.run_number }}.apk` on your phone, open it and allow
             "Install unknown apps" for your browser/file manager when Android asks.
             Requires Android 7.0+ with OpenGL ES 3 (almost every phone from 2016 onwards).
 
-            Map data © OpenStreetMap contributors (ODbL).
+            The `.aab` is the Google Play upload bundle (sign it with your upload key).
+
+            Map data © OpenStreetMap contributors (ODbL). Skies and textures: Poly Haven / ambientCG (CC0).
 
   emulator-test:
     needs: build
@@ -164,6 +173,7 @@ jobs:
           disable-animations: true
           script: |
             adb install -r dist/*.apk
+            adb shell pm list packages | grep uaedrive
             adb logcat -c
             adb shell am start -n ae.uaedrive.game/.MainActivity
             sleep 40

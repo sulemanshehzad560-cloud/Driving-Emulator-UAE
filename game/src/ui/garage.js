@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { buildCar } from '../cars/carFactory.js';
+import { loadCarModel, instantiateModelCar } from '../cars/modelCars.js';
 
 function backdropTexture() {
   const c = document.createElement('canvas');
@@ -91,16 +92,27 @@ export class Garage {
     this.mode = m;
   }
 
-  show(style, color) {
-    const key = `${style}-${color}`;
+  /** Show a car on the turntable: the real 3D model when the catalog has one, else the procedural car. */
+  show(spec, color) {
+    const key = `${spec.id}-${color}`;
     if (this.car && this.carKey === key) return;
-    if (this.car) this.turntable.remove(this.car);
-    this.car = buildCar({ style, color, detail: true, quality: 'high' });
     this.carKey = key;
-    this.car.position.y = 0.05;
-    this.car.userData.headMat.emissiveIntensity = 2.5;
-    this.car.userData.brakeMat.emissiveIntensity = 1.2;
-    this.turntable.add(this.car);
+    const put = (car) => {
+      if (this.carKey !== key) return; // the player already moved on to another car
+      if (this.car) this.turntable.remove(this.car);
+      this.car = car;
+      car.position.y = 0.05;
+      car.userData.headMat.emissiveIntensity = 2.5;
+      car.userData.brakeMat.emissiveIntensity = 1.2;
+      this.turntable.add(car);
+    };
+    put(buildCar({ style: spec.style, color, detail: true, quality: 'high' }));
+    if (spec.model) {
+      loadCarModel(spec.model).then((tpl) => {
+        if (!tpl) return;
+        try { put(instantiateModelCar(spec, tpl, color)); } catch (e) { console.warn('[garage]', e.message); }
+      });
+    }
   }
 
   resize() {
