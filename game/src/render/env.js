@@ -10,10 +10,10 @@ import { glowTexture } from './textures.js';
 import { physicsCore } from '../sim/physicsCore.js';
 
 export const QUALITY = {
-  low: { name: 'Low', tex: '1k', hdri: '1k', hdCars: false, post: false, msaa: 0, ao: false, flare: false, probe: false, shadows: false, propShadows: false, shadowMap: 0, tileRadius: 1100, propRadius: 450, maxBuildingsPerTile: 1200, traffic: 10, far: 1400, bloom: false, mirrorEvery: 3, mirrorScale: 0.5, parkedCars: false },
-  medium: { name: 'Medium', tex: '1k', hdri: '1k', hdCars: false, post: true, msaa: 2, ao: false, flare: false, probe: false, shadows: true, propShadows: false, shadowMap: 1024, tileRadius: 1400, propRadius: 650, maxBuildingsPerTile: 2500, traffic: 18, far: 1900, bloom: false, mirrorEvery: 2, mirrorScale: 0.75, parkedCars: true },
-  high: { name: 'High', tex: '2k', hdri: '2k', hdCars: true, post: true, msaa: 4, ao: false, flare: true, probe: true, shadows: true, propShadows: true, shadowMap: 2048, tileRadius: 1700, propRadius: 850, maxBuildingsPerTile: 4000, traffic: 26, far: 2400, bloom: true, mirrorEvery: 1, mirrorScale: 1, parkedCars: true },
-  ultra: { name: 'Ultra', tex: '4k', hdri: '4k', hdCars: true, post: true, msaa: 4, ao: true, flare: true, probe: true, shadows: true, propShadows: true, shadowMap: 4096, tileRadius: 2100, propRadius: 1100, maxBuildingsPerTile: 6000, traffic: 34, far: 3000, bloom: true, mirrorEvery: 1, mirrorScale: 1.25, parkedCars: true },
+  low: { name: 'Low', tex: '1k', hdri: '1k', hdCars: false, post: false, msaa: 0, ao: false, flare: false, probe: false, shadows: false, propShadows: false, shadowMap: 0, tileRadius: 1100, nearRadius: 160, propRadius: 380, maxBuildingsPerTile: 1200, traffic: 10, far: 1400, bloom: false, mirrorEvery: 3, mirrorScale: 0.5, parkedCars: false },
+  medium: { name: 'Medium', tex: '1k', hdri: '1k', hdCars: false, post: true, msaa: 2, ao: false, flare: false, probe: false, shadows: true, propShadows: false, shadowMap: 1024, tileRadius: 1400, nearRadius: 220, propRadius: 550, maxBuildingsPerTile: 2500, traffic: 18, far: 1900, bloom: false, mirrorEvery: 2, mirrorScale: 0.75, parkedCars: true },
+  high: { name: 'High', tex: '2k', hdri: '2k', hdCars: true, post: true, msaa: 2, ao: false, flare: true, probe: true, shadows: true, propShadows: true, shadowMap: 2048, tileRadius: 1700, nearRadius: 280, propRadius: 700, maxBuildingsPerTile: 4000, traffic: 26, far: 2400, bloom: true, mirrorEvery: 1, mirrorScale: 1, parkedCars: true },
+  ultra: { name: 'Ultra', tex: '4k', hdri: '4k', hdCars: true, post: true, msaa: 4, ao: true, flare: true, probe: true, shadows: true, propShadows: true, shadowMap: 4096, tileRadius: 2100, nearRadius: 360, propRadius: 900, maxBuildingsPerTile: 6000, traffic: 34, far: 3000, bloom: true, mirrorEvery: 1, mirrorScale: 1.25, parkedCars: true },
 };
 
 export const RESOLUTIONS = {
@@ -51,8 +51,11 @@ export function autoQuality(renderer) {
   } catch (e) { /* ignore */ }
   const weakGpu = /mali-4|mali-t|adreno \(tm\) [34]\d\d|powervr|sgx|swiftshader|llvmpipe/.test(gpu);
   if (weakGpu || mem <= 2 || cores <= 4) return 'low';
-  if (mem <= 4 || /adreno \(tm\) 5|mali-g5|mali-g7[12]/.test(gpu)) return 'medium';
-  return 'high';
+  // High only on known flagship GPUs; everything else starts on Medium and the
+  // in-game frame-rate governor scales further down if a phone still struggles
+  const flagship = /adreno \(tm\) (7[3-9]\d|[89]\d\d)|mali-g7[1-9]\d|mali-g[89]\d\d|immortalis|xclipse|apple/.test(gpu);
+  if (flagship && mem >= 6) return 'high';
+  return 'medium';
 }
 
 export function pixelRatioFor(resolution, quality) {

@@ -56,7 +56,7 @@ export class Game {
     this.start = start;
     this.profile = profile;
     this.settings = profile.settings;
-    this.q = QUALITY[qualityKey] || QUALITY.medium;
+    this.q = { ...(QUALITY[qualityKey] || QUALITY.medium) }; // copy: the frame-rate governor may lower it
     this.qualityKey = qualityKey;
     this.audio = audio;
     this.radio = radio;
@@ -154,7 +154,7 @@ export class Game {
     this.setupMirrors();
     this.setupPost();
     if (q.probe) {
-      this.probe = new ReflectionProbe(this.renderer, this.scene, this.qualityKey === 'ultra' ? 256 : 128, this.qualityKey === 'ultra' ? 3 : 6);
+      this.probe = new ReflectionProbe(this.renderer, this.scene, this.qualityKey === 'ultra' ? 256 : 128, this.qualityKey === 'ultra' ? 1 : 2);
       this.probe.apply(this.car);
     }
 
@@ -236,14 +236,18 @@ export class Game {
   }
 
   setupMirrors() {
-    const scale = this.q.mirrorScale;
-    const mk = (w, h) => new THREE.WebGLRenderTarget(Math.round(w * scale), Math.round(h * scale), { samples: 0 });
+    // size each mirror to the pixels it covers on screen so it never looks blocky
+    const buf = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    const scale = Math.max(0.75, this.q.mirrorScale);
+    const samples = this.q.msaa ? 2 : 0;
+    const mk = (w, h, rw, rh) => new THREE.WebGLRenderTarget(
+      Math.round(Math.min(1024, Math.max(w, buf.x * rw)) * scale), Math.round(Math.min(512, Math.max(h, buf.y * rh)) * scale), { samples });
     const st = styleDims(this.spec.style);
     const eye = this.interior.userData.eye;
     this.mirrors = [
-      { key: 'rear', rt: mk(512, 160), cam: new THREE.PerspectiveCamera(38, 512 / 160, 0.3, 700), pos: new THREE.Vector3(0, eye.y + 0.15, 0.3), yaw: 0, rect: [0.36, 0.13, 0.28, 0.1] },
-      { key: 'left', rt: mk(300, 200), cam: new THREE.PerspectiveCamera(42, 1.5, 0.3, 600), pos: new THREE.Vector3(-st.W / 2 - 0.15, eye.y - 0.1, -0.7), yaw: -0.18, rect: [0.01, 0.28, 0.16, 0.2] },
-      { key: 'right', rt: mk(300, 200), cam: new THREE.PerspectiveCamera(42, 1.5, 0.3, 600), pos: new THREE.Vector3(st.W / 2 + 0.15, eye.y - 0.1, -0.7), yaw: 0.18, rect: [0.83, 0.28, 0.16, 0.2] },
+      { key: 'rear', rt: mk(512, 160, 0.28, 0.1), cam: new THREE.PerspectiveCamera(38, 512 / 160, 0.3, 700), pos: new THREE.Vector3(0, eye.y + 0.15, 0.3), yaw: 0, rect: [0.36, 0.13, 0.28, 0.1] },
+      { key: 'left', rt: mk(300, 200, 0.16, 0.2), cam: new THREE.PerspectiveCamera(42, 1.5, 0.3, 600), pos: new THREE.Vector3(-st.W / 2 - 0.15, eye.y - 0.1, -0.7), yaw: -0.18, rect: [0.01, 0.28, 0.16, 0.2] },
+      { key: 'right', rt: mk(300, 200, 0.16, 0.2), cam: new THREE.PerspectiveCamera(42, 1.5, 0.3, 600), pos: new THREE.Vector3(st.W / 2 + 0.15, eye.y - 0.1, -0.7), yaw: 0.18, rect: [0.83, 0.28, 0.16, 0.2] },
     ];
     this.overlay = new THREE.Scene();
     this.overlayCam = new THREE.OrthographicCamera(0, 1, 1, 0, -1, 1);
@@ -798,6 +802,7 @@ export class Game {
     }
     this.updateClimate(dt);
     this.lights.update(this.time);
+    if (this.frame % 10 === 0) this.lights.cull(p.x, p.z, this.q.nearRadius ? this.q.nearRadius + 200 : 450);
     this.traffic.update(dt, p);
     this.updateMission();
     this.syncCar(input);
@@ -1095,9 +1100,12 @@ export class Game {
     return any;
   }
 
-  /** Keep the frame rate smooth by trading resolution (Auto resolution only). */
+  /**
+   * Keep the frame rate smooth: first trade resolution (Auto resolution only,
+   * never below 480 lines), then switch off the most expensive effects one
+   * step at a time and pull in the prop draw distance.
+   */
   adaptResolution(dt) {
-    if (this.settings.resolution !== 'auto') return;
     const pf = this.perf;
     pf.acc += dt;
     pf.frames++;
@@ -1105,27 +1113,50 @@ export class Game {
     const fps = pf.frames / pf.acc;
     pf.acc = 0;
     pf.frames = 0;
-    if (fps < 26) pf.slow++;
+    if (this.paused || this.loading) return;
+    if (fps < 28) pf.slow++;
     else pf.slow = 0;
     if (fps > 50) pf.fast++;
     else pf.fast = 0;
+    const auto = this.settings.resolution === 'auto';
     const base = this.basePixelRatio || (this.basePixelRatio = this.renderer.getPixelRatio());
     // never scale below 480 rendered lines: blocky pixels are worse than a few fps
     const minScale = Math.min(1, Math.max(0.6, 480 / (Math.min(innerWidth, innerHeight) * base)));
-    let changed = false;
-    if (pf.slow >= 3 && pf.scale > minScale) {
-      pf.scale = Math.max(minScale, pf.scale - 0.1);
+    if (pf.slow >= 3) {
       pf.slow = 0;
-      changed = true;
-    } else if (pf.fast >= 6 && pf.scale < 1) {
+      if (auto && pf.scale > minScale) {
+        pf.scale = Math.max(minScale, pf.scale - 0.1);
+        this.renderer.setPixelRatio(base * pf.scale);
+        this.resize();
+      } else this.reduceEffects();
+    } else if (auto && pf.fast >= 6 && pf.scale < 1 && !pf.level) {
       pf.scale = Math.min(1, pf.scale + 0.1);
       pf.fast = 0;
-      changed = true;
-    }
-    if (changed) {
       this.renderer.setPixelRatio(base * pf.scale);
       this.resize();
     }
+  }
+
+  reduceEffects() {
+    const pf = this.perf;
+    pf.level = (pf.level || 0) + 1;
+    const q = this.q;
+    if (pf.level === 1) {
+      if (this.bloom) this.bloom.enabled = false;
+      this.probe = null;
+      q.mirrorEvery = Math.max(q.mirrorEvery, 3);
+    } else if (pf.level === 2) {
+      q.nearRadius = Math.round((q.nearRadius || 260) * 0.7);
+      this.streamer.propRadius = Math.round(this.streamer.propRadius * 0.7);
+    } else if (pf.level === 3) {
+      this.renderer.shadowMap.enabled = false;
+      this.scene.traverse((o) => { if (o.material && !Array.isArray(o.material)) o.material.needsUpdate = true; });
+    } else if (pf.level === 4 && this.post) {
+      this.post.dispose();
+      this.post = null;
+      this.bloom = null;
+    } else return;
+    if (pf.level === 1) this.hud.toast('Performance mode: effects reduced for a smooth frame rate', 'info', 3500);
   }
 
   render(dt = 0.016) {
@@ -1133,11 +1164,8 @@ export class Game {
     if (this.probe) this.probe.update(this.player, [this.car]);
     const any = this.renderMirrors();
     if (this.post) {
-      const season = this.settings.season;
-      const hotDay = season === 'summer' && this.hour > 9.5 && this.hour < 17 ? 1 : season === 'sandstorm' ? 0.5 : 0;
       this.post.update(this.time, {
         speed: Math.max(0, Math.min(1, (this.player.kmh - 110) / 170)) * (this.cameraMode === 'cockpit' ? 0.5 : 1),
-        haze: hotDay,
         cinematic: this.cameraMode === 'cinematic',
       });
       this.post.render();

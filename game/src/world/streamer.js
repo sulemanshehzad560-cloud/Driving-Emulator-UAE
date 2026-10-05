@@ -135,6 +135,7 @@ export class Streamer {
       else if (t.props) t.props.visible = d < this.propRadius + 150;
       if (!t.props && d < this.propRadius) this.addProps(t);
     }
+    this.updateChunks(X, Z);
     // loading state for the tile under the player
     const [cx, cy] = tileAt(X, Z);
     const k = `${cx}_${cy}`;
@@ -204,14 +205,58 @@ export class Streamer {
     return { office: M.office, villa: M.villa, shop: M.storefront, ind: M.industrial, mosque: M.mosque }[style] || M.office;
   }
 
+  /**
+   * Street furniture is split into CHUNK-sized cells so each cell is frustum
+   * culled on its own and drawn at a level of detail for its distance: full
+   * detail (with shadows) close by, a few cheap stand-ins (palms, lamp posts,
+   * rooftop kit) further out, nothing beyond the prop radius.
+   */
   addProps(tile) {
-    const inst = tile.data.instances || {};
-    const g = this.props.tileGroup(inst, { shadows: this.q.shadows && this.q.propShadows });
-    g.add(this.props.stopSigns(stopSignList(tile.data)));
-    if (inst.parked && this.q.parkedCars !== false) g.add(parkedCars(inst.parked, this.q));
+    const g = new THREE.Group();
+    g.matrixAutoUpdate = false;
+    const [ox, oy] = tile.data.origin;
+    const cells = splitInstances(tile.data.instances || {}, stopSignList(tile.data));
+    tile.chunks = [...cells.values()].map((c) => ({
+      ...c,
+      x0: ox + c.i * CHUNK, x1: ox + (c.i + 1) * CHUNK, z0: -oy + c.j * CHUNK, z1: -oy + (c.j + 1) * CHUNK,
+      near: null, far: null,
+    }));
     tile.group.add(g);
-    g.updateMatrixWorld(true);
     tile.props = g;
+  }
+
+  updateChunks(X, Z) {
+    const nearR = this.q.nearRadius || 260;
+    let builds = 0;
+    for (const t of this.tiles.values()) {
+      if (!t.chunks || !t.props.visible) continue;
+      for (const c of t.chunks) {
+        const dx = X < c.x0 ? c.x0 - X : X > c.x1 ? X - c.x1 : 0;
+        const dz = Z < c.z0 ? c.z0 - Z : Z > c.z1 ? Z - c.z1 : 0;
+        const d = Math.hypot(dx, dz);
+        const tier = d < nearR ? 'near' : d < this.propRadius ? 'far' : null;
+        // build at most a couple of cells a frame so streaming never hitches
+        if (tier && !c[tier] && builds < 2) {
+          c[tier] = this.buildChunk(t, c, tier);
+          builds++;
+        }
+        if (c.near) c.near.visible = tier === 'near';
+        if (c.far) c.far.visible = tier === 'far' || (tier === 'near' && !c.near);
+      }
+    }
+  }
+
+  buildChunk(tile, c, tier) {
+    const near = tier === 'near';
+    const g = this.props.tileGroup(c.inst, { shadows: near && this.q.shadows && this.q.propShadows, lod: tier });
+    if (near) {
+      g.add(this.props.stopSigns(c.stops));
+      if (c.inst.parked && this.q.parkedCars !== false) g.add(parkedCars(c.inst.parked, this.q));
+    }
+    g.matrixAutoUpdate = false;
+    tile.props.add(g);
+    g.updateMatrixWorld(true);
+    return g;
   }
 
   remove(key) {
@@ -345,6 +390,46 @@ function stopSignList(data) {
     }
   }
   return out;
+}
+
+const CHUNK = 250;
+// instance arrays: [stride, offset of the z coordinate] (x is always first)
+const SPLIT = { palm: [4, 1], lamp: [4, 1], pool: [3, 1], bench: [3, 1], bin: [3, 1], utility: [3, 1], shelter: [3, 1], rooftop: [7, 2], dome: [5, 2], minaret: [6, 2], parked: [4, 1] };
+
+/** Group a tile's prop instances (tile-local x/z) into CHUNK cells. */
+function splitInstances(inst, stops) {
+  const cells = new Map();
+  const cell = (x, z) => {
+    const i = Math.floor(x / CHUNK), j = Math.floor(z / CHUNK);
+    const k = i * 1000 + j;
+    if (!cells.has(k)) cells.set(k, { i, j, inst: {}, stops: [] });
+    return cells.get(k);
+  };
+  const push = (target, key, arr, o, stride) => {
+    if (!target[key]) target[key] = [];
+    for (let k = 0; k < stride; k++) target[key].push(arr[o + k]);
+  };
+  for (const [key, [stride, zo]] of Object.entries(SPLIT)) {
+    const arr = inst[key];
+    if (!arr) continue;
+    for (let o = 0; o + stride <= arr.length; o += stride) push(cell(arr[o], arr[o + zo]).inst, key, arr, o, stride);
+  }
+  for (const [speed, arr] of Object.entries(inst.speed || {})) {
+    for (let o = 0; o + 3 <= arr.length; o += 3) {
+      const c = cell(arr[o], arr[o + 1]).inst;
+      if (!c.speed) c.speed = {};
+      push(c.speed, speed, arr, o, 3);
+    }
+  }
+  for (const gt of inst.gantry || []) {
+    const c = cell(gt.x, gt.z).inst;
+    (c.gantry || (c.gantry = [])).push(gt);
+  }
+  for (let o = 0; o + 3 <= stops.length; o += 3) {
+    const c = cell(stops[o], stops[o + 1]);
+    c.stops.push(stops[o], stops[o + 1], stops[o + 2]);
+  }
+  return cells;
 }
 
 const PARKED_STYLES = ['sedan', 'suv', 'sedan', 'coupe', 'boxy', 'van', 'suv', 'sedan'];

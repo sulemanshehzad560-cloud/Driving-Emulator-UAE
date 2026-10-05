@@ -5,7 +5,7 @@
 // Pipeline (quality dependent):
 //   scene (4x MSAA, HDR half-float) -> GTAO ambient occlusion (Ultra)
 //   -> bloom (High+) -> ACES tone map + sRGB (OutputPass)
-//   -> CinematicShader: desert heat-haze, speed blur, chromatic aberration,
+//   -> CinematicShader: gentle edge speed blur,
 //      filmic colour grade, vignette, film grain, rain/dust lens tint.
 import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
@@ -21,12 +21,9 @@ export const CinematicShader = {
     tDiffuse: { value: null },
     uTime: { value: 0 },
     uResolution: { value: new THREE.Vector2(1, 1) },
-    uHorizon: { value: 0.5 }, // screen-space y of the horizon (0 bottom .. 1 top)
-    uHaze: { value: 0 }, // heat shimmer strength
     uSpeed: { value: 0 }, // 0..1 motion blur amount
-    uAberration: { value: 0.6 },
     uVignette: { value: 0.35 },
-    uGrain: { value: 0.035 },
+    uGrain: { value: 0.012 },
     uLift: { value: new THREE.Vector3(0.0, 0.0, 0.01) },
     uGamma: { value: new THREE.Vector3(1.0, 1.0, 1.0) },
     uGain: { value: new THREE.Vector3(1.04, 1.0, 0.95) },
@@ -44,7 +41,7 @@ export const CinematicShader = {
   fragmentShader: /* glsl */ `
     precision highp float;
     uniform sampler2D tDiffuse;
-    uniform float uTime, uHorizon, uHaze, uSpeed, uAberration, uVignette, uGrain;
+    uniform float uTime, uSpeed, uVignette, uGrain;
     uniform float uSaturation, uContrast, uTintAmount;
     uniform vec2 uResolution;
     uniform vec3 uLift, uGamma, uGain, uTint;
@@ -56,54 +53,33 @@ export const CinematicShader = {
       return fract(p.x * p.y);
     }
 
-    vec3 sampleCA(vec2 uv, vec2 dir, float amount) {
-      // chromatic aberration: split RGB along the radial direction
-      vec2 off = dir * amount / uResolution;
-      return vec3(
-        texture2D(tDiffuse, uv + off).r,
-        texture2D(tDiffuse, uv).g,
-        texture2D(tDiffuse, uv - off).b);
-    }
-
     void main() {
       vec2 uv = vUv;
       vec2 fromCentre = uv - 0.5;
       float dist = length(fromCentre);
 
-      // 1. heat haze: shimmer in a band just above the horizon (summer noon)
-      if (uHaze > 0.0) {
-        float band = smoothstep(0.12, 0.0, abs(uv.y - uHorizon - 0.02));
-        float wave = sin(uv.y * 380.0 + uTime * 7.0) * 0.6 + sin(uv.y * 170.0 - uTime * 4.3 + uv.x * 30.0) * 0.4;
-        uv.x += wave * band * uHaze * 0.0022;
-        uv.y += cos(uv.x * 220.0 + uTime * 5.0) * band * uHaze * 0.0012;
-      }
-
-      // 2. radial speed blur towards the vanishing point
-      vec3 col;
-      float ca = uAberration * (0.4 + dist * 2.2) * (1.0 + uSpeed * 2.0);
+      // 1. gentle speed blur, only towards the screen edges and only at high speed
+      vec3 col = texture2D(tDiffuse, uv).rgb;
       if (uSpeed > 0.01) {
-        vec2 dir = fromCentre * uSpeed * 0.045;
-        col = vec3(0.0);
-        float wsum = 0.0;
-        for (int i = 0; i < 8; i++) {
-          float t = float(i) / 7.0;
-          float w = 1.0 - t * 0.6;
-          col += sampleCA(uv - dir * t * smoothstep(0.12, 0.5, dist), fromCentre, ca) * w;
+        vec2 dir = fromCentre * uSpeed * 0.02 * smoothstep(0.3, 0.6, dist);
+        float wsum = 1.0;
+        for (int i = 1; i < 4; i++) {
+          float t = float(i) / 3.0;
+          float w = 1.0 - t * 0.7;
+          col += texture2D(tDiffuse, uv - dir * t).rgb * w;
           wsum += w;
         }
         col /= wsum;
-      } else {
-        col = sampleCA(uv, fromCentre, ca);
       }
 
-      // 3. filmic grade (lift / gamma / gain, contrast, saturation)
+      // 2. filmic grade (lift / gamma / gain, contrast, saturation)
       col = pow(max(col * uGain + uLift * (1.0 - col), 0.0), 1.0 / uGamma);
       col = (col - 0.5) * uContrast + 0.5;
       float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
       col = mix(vec3(luma), col, uSaturation);
       col = mix(col, col * uTint, uTintAmount);
 
-      // 4. vignette + film grain
+      // 3. vignette + film grain
       col *= 1.0 - uVignette * smoothstep(0.35, 0.85, dist);
       float g = hash(uv * uResolution + fract(uTime * 13.7) * 100.0) - 0.5;
       col += g * uGrain;
@@ -175,8 +151,8 @@ export class CinematicPipeline {
     }
     // guard: a single NaN/Inf pixel (degenerate normals in a detailed model, half-float
     // overflow on a hot emissive) would otherwise be smeared over the frame by bloom
-    this.composer.addPass(new ShaderPass(SanitizeShader));
     if (quality.bloom) {
+      this.composer.addPass(new ShaderPass(SanitizeShader));
       // HDR scene: only genuinely bright things (lamps, sun glints) should bloom
       this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.18, 0.35, 2.5);
       this.composer.addPass(this.bloom);
@@ -184,7 +160,6 @@ export class CinematicPipeline {
     this.composer.addPass(new OutputPass());
     this.grade = new ShaderPass(CinematicShader);
     this.composer.addPass(this.grade);
-    this.tmp = new THREE.Vector3();
   }
 
   setSize(w, h) {
@@ -205,17 +180,11 @@ export class CinematicPipeline {
     u.uTintAmount.value = g.tintAmount;
   }
 
-  update(time, { speed = 0, haze = 0, cinematic = false } = {}) {
+  update(time, { speed = 0, cinematic = false } = {}) {
     const u = this.grade.uniforms;
     u.uTime.value = time;
     u.uSpeed.value += (speed - u.uSpeed.value) * 0.1;
-    u.uHaze.value = haze;
-    u.uVignette.value = cinematic ? 0.55 : 0.32;
-    // horizon position on screen: project a far point straight ahead
-    const cam = this.camera;
-    const dir = cam.getWorldDirection(this.tmp);
-    const p = new THREE.Vector3(cam.position.x + dir.x * 2000, 0, cam.position.z + dir.z * 2000).project(cam);
-    u.uHorizon.value = THREE.MathUtils.clamp(p.y * 0.5 + 0.5, -1, 2);
+    u.uVignette.value = cinematic ? 0.45 : 0.2;
   }
 
   render() {

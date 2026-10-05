@@ -149,6 +149,10 @@ export function buildTile(T, opts) {
   }
   const roads = T.roads.map((r) => ({ ...r, width: roadWidth(r), rank: RANK[r.type] || 1 }));
 
+  // which carriageway covers a point: lane lines and kerbs of one road must not
+  // be drawn across another (slip-road merges, flyovers mapped at ground level)
+  const cover = roadCover(roads, px, pz);
+
   // node usage -> junctions (boundary nodes, negative ids, are never junctions)
   const deg = new Map();
   const nodeRoads = new Map();
@@ -266,18 +270,20 @@ export function buildTile(T, opts) {
     }
     // kerbs / barriers along the edges (trimmed at junctions)
     const trimmed = trimLine(pts, trimA + 1.5, trimB + 1.5);
+    const clip = (x, z) => cover(x, z, r);
     for (const seg of trimmed) {
       if (motorway) {
         if (r.oneway && r.rank >= 8) jersey(G.barrier, seg, -hw - 0.6);
         guardrail(G.guardrail, seg, hw + 1.4);
-      } else if (r.rank >= 3) {
+      } else {
+        // every street gets a raised kerb on both edges; striped on main roads
         const striped = r.rank >= 5;
-        kerb(striped ? G.kerbStriped : G.kerb, seg, hw, striped);
-        if (!r.oneway || r.rank < 5) kerb(striped ? G.kerbStriped : G.kerb, seg, -hw, striped);
-        else kerb(striped ? G.kerbStriped : G.kerb, seg, -hw, striped);
+        const line = densify(seg, 3);
+        kerb(striped ? G.kerbStriped : G.kerb, line, hw, striped, clip);
+        kerb(striped ? G.kerbStriped : G.kerb, line, -hw, striped, clip);
       }
     }
-    markings(G, r, pts, junctionR);
+    markings(G, r, pts, junctionR, clip);
     if (q.props) roadProps(r, pts, hw, junctionR, inst, rand, inBuilding, motorway);
   }
   for (const [n, rad] of junctionR) {
@@ -444,6 +450,55 @@ function sideStrip(g, pts, from, to, y, uvScale, both = true) {
   }
 }
 
+/** Insert points so no segment is longer than `step` metres. */
+function densify(pts, step) {
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, az] = pts[i - 1], [bx, bz] = pts[i];
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / step));
+    for (let k = 1; k <= n; k++) out.push([ax + ((bx - ax) * k) / n, az + ((bz - az) * k) / n]);
+  }
+  return out;
+}
+
+/**
+ * Spatial index of road centre-line segments. Returns cover(x, z, self): true
+ * when (x, z) lies on the carriageway of a road other than `self`. A bridge
+ * keeps its own lines where it passes over a ground-level road.
+ */
+function roadCover(roads, px, pz) {
+  const CELL = 24;
+  const grid = new Map();
+  const key = (i, j) => i * 100003 + j;
+  for (const r of roads) {
+    const hw = r.width / 2;
+    for (let k = 1; k < r.n.length; k++) {
+      const ax = px[r.n[k - 1]], az = pz[r.n[k - 1]], bx = px[r.n[k]], bz = pz[r.n[k]];
+      const seg = { r, ax, az, bx, bz, hw };
+      const i0 = Math.floor((Math.min(ax, bx) - hw) / CELL), i1 = Math.floor((Math.max(ax, bx) + hw) / CELL);
+      const j0 = Math.floor((Math.min(az, bz) - hw) / CELL), j1 = Math.floor((Math.max(az, bz) + hw) / CELL);
+      for (let i = i0; i <= i1; i++) {
+        for (let j = j0; j <= j1; j++) {
+          const kk = key(i, j);
+          if (!grid.has(kk)) grid.set(kk, []);
+          grid.get(kk).push(seg);
+        }
+      }
+    }
+  }
+  return (x, z, self) => {
+    const cell = grid.get(key(Math.floor(x / CELL), Math.floor(z / CELL)));
+    if (!cell) return false;
+    for (const sg of cell) {
+      if (sg.r === self || (self.bridge && !sg.r.bridge)) continue;
+      const dx = sg.bx - sg.ax, dz = sg.bz - sg.az;
+      const t = Math.max(0, Math.min(1, ((x - sg.ax) * dx + (z - sg.az) * dz) / (dx * dx + dz * dz || 1)));
+      if (Math.hypot(x - sg.ax - dx * t, z - sg.az - dz * t) < sg.hw - 0.05) return true;
+    }
+    return false;
+  };
+}
+
 /** Split a polyline, trimming `a` metres off the start and `b` off the end. */
 function trimLine(pts, a, b) {
   let total = 0;
@@ -469,10 +524,10 @@ function trimLine(pts, a, b) {
 }
 
 /** Raised kerb (15 cm) along an offset line: top face + face towards the road. */
-function kerb(g, pts, off, striped) {
+function kerb(g, pts, off, striped, clip) {
   const nrm = lateralNormals(pts);
   const s = Math.sign(off);
-  const inner = off, outer = off + s * 0.25;
+  const inner = off, outer = off + s * 0.3;
   let v = 0;
   let prev = null;
   for (let i = 0; i < pts.length; i++) {
@@ -484,13 +539,17 @@ function kerb(g, pts, off, striped) {
     const b = g.vert(x + nx * inner, 0.2, z + nz * inner, -nx * s, 0, -nz * s, 0.5, uv);
     const c = g.vert(x + nx * inner, 0.2, z + nz * inner, 0, 1, 0, 0.5, uv);
     const d = g.vert(x + nx * outer, 0.2, z + nz * outer, 0, 1, 0, 1, uv);
-    if (prev) {
+    const blocked = clip && i > 0 && clip(
+      (x + pts[i - 1][0]) / 2 + nx * (off + s * 0.15),
+      (z + pts[i - 1][1]) / 2 + nz * (off + s * 0.15));
+    if (prev && !blocked) {
+      // counter-clockwise seen from the road / from above (front faces)
       if (s > 0) {
-        g.quad(prev[0], a, b, prev[1]);
-        g.quad(prev[2], c, d, prev[3]);
+        g.quad(prev[1], b, a, prev[0]);
+        g.quad(prev[3], d, c, prev[2]);
       } else {
-        g.quad(prev[0], prev[1], b, a);
-        g.quad(prev[2], prev[3], d, c);
+        g.quad(a, b, prev[1], prev[0]);
+        g.quad(c, d, prev[3], prev[2]);
       }
     }
     prev = [a, b, c, d];
@@ -513,7 +572,7 @@ function jersey(g, pts, off) {
       const side = o < 0 ? -1 : 1;
       return g.vert(pts[i][0] + nx * (off + o), y, pts[i][1] + nz * (off + o), (nx / ln) * side * (1 - up), up, (nz / ln) * side * (1 - up), k / 5, v / 3);
     });
-    if (prev) for (let k = 0; k < profile.length - 1; k++) g.quad(prev[k], row[k], row[k + 1], prev[k + 1]);
+    if (prev) for (let k = 0; k < profile.length - 1; k++) g.quad(prev[k + 1], row[k + 1], row[k], prev[k]);
     prev = row;
   }
 }
@@ -526,13 +585,16 @@ function guardrail(g, pts, off) {
     if (i > 0) v += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
     const [nx, nz] = nrm[i];
     const x = pts[i][0] + nx * off, z = pts[i][1] + nz * off;
+    // two-sided rail: a face towards the road and one away from it
     const a = g.vert(x, 0.45, z, -nx, 0, -nz, 0, v);
     const b = g.vert(x, 0.78, z, -nx, 0, -nz, 1, v);
+    const a2 = g.vert(x, 0.45, z, nx, 0, nz, 0, v);
+    const b2 = g.vert(x, 0.78, z, nx, 0, nz, 1, v);
     if (prev) {
       g.quad(prev[0], a, b, prev[1]);
-      g.quad(prev[1], b, a, prev[0]);
+      g.quad(prev[3], b2, a2, prev[2]);
     }
-    prev = [a, b];
+    prev = [a, b, a2, b2];
   }
   // posts every 4 m
   let acc = 0;
@@ -559,7 +621,7 @@ function box(g, cx, cy, cz, sx, sy, sz) {
   ];
   for (const [n, vs] of faces) {
     const ids = vs.map(([x, y, z], k) => g.vert(cx + (x * sx) / 2, cy + (y * sy) / 2, cz + (z * sz) / 2, n[0], n[1], n[2], k & 1, k >> 1));
-    g.quad(ids[0], ids[3], ids[2], ids[1]);
+    g.quad(ids[0], ids[1], ids[2], ids[3]);
   }
 }
 
@@ -573,7 +635,7 @@ function disc(g, x, z, r, y, segs, road) {
   for (let i = 0; i < segs; i++) g.tri(c, ids[i + 1], ids[i]);
 }
 
-function paintQuad(g, a, b, off, w, dash, trimA, trimB) {
+function paintQuad(g, a, b, off, w, dash, trimA, trimB, clip) {
   const dx = b[0] - a[0], dz = b[1] - a[1];
   const len = Math.hypot(dx, dz);
   if (len < 1) return;
@@ -590,8 +652,25 @@ function paintQuad(g, a, b, off, w, dash, trimA, trimB) {
     const i3 = g.vert(p1x - rx * hw, 0.09, p1z - rz * hw, 0, 1, 0, p1x / 3, p1z / 3);
     g.quad(i0, i1, i2, i3);
   };
-  if (!dash) emit(start, end);
-  else for (let s = start; s < end; s += dash[0] + dash[1]) emit(s, Math.min(end, s + dash[0]));
+  // drop the pieces that would lie on another road's carriageway
+  const piece = (s0, s1) => {
+    if (!clip) return emit(s0, s1);
+    const n = Math.max(1, Math.ceil((s1 - s0) / 2));
+    let runStart = null;
+    for (let k = 0; k <= n; k++) {
+      const t0 = s0 + ((s1 - s0) * k) / n;
+      const t1 = s0 + ((s1 - s0) * (k + 1)) / n;
+      const m = (t0 + t1) / 2;
+      const free = k < n && !clip(a[0] + ux * m + rx * off, a[1] + uz * m + rz * off);
+      if (free && runStart === null) runStart = t0;
+      if (!free && runStart !== null) {
+        if (t0 - runStart > 0.3) emit(runStart, t0);
+        runStart = null;
+      }
+    }
+  };
+  if (!dash) piece(start, end);
+  else for (let s = start; s < end; s += dash[0] + dash[1]) piece(s, Math.min(end, s + dash[0]));
 }
 
 /** A bar across the road: `back` metres before node n along -d, `depth` deep, lateral from..to. */
@@ -604,7 +683,7 @@ function paintBar(g, x, z, dx, dz, back, depth, from, to) {
   g.quad(ids[0], ids[1], ids[2], ids[3]);
 }
 
-function markings(G, r, pts, junctionR) {
+function markings(G, r, pts, junctionR, clip) {
   const hw = r.width / 2;
   const lanes = r.oneway ? r.lanes : Math.max(2, r.lanes);
   const lpd = r.oneway ? r.lanes : Math.max(1, Math.floor(r.lanes / 2));
@@ -614,23 +693,23 @@ function markings(G, r, pts, junctionR) {
     const tB = junctionR.has(nb) ? junctionR.get(nb) + 1 : 0;
     const a = pts[i - 1], b = pts[i];
     if (r.oneway) {
-      paintQuad(G.markY, a, b, -hw + 0.35, 0.15, null, tA, tB);
-      paintQuad(G.markW, a, b, hw - 0.35, 0.15, null, tA, tB);
+      paintQuad(G.markY, a, b, -hw + 0.35, 0.15, null, tA, tB, clip);
+      paintQuad(G.markW, a, b, hw - 0.35, 0.15, null, tA, tB, clip);
       const lw = (r.width - 0.7) / lanes;
-      for (let k = 1; k < lanes; k++) paintQuad(G.markW, a, b, -hw + 0.35 + lw * k, 0.13, [3, 6], tA, tB);
-    } else if (r.rank >= 3) {
-      paintQuad(G.markW, a, b, hw - 0.35, 0.14, null, tA, tB);
-      paintQuad(G.markW, a, b, -hw + 0.35, 0.14, null, tA, tB);
+      for (let k = 1; k < lanes; k++) paintQuad(G.markW, a, b, -hw + 0.35 + lw * k, 0.13, [3, 6], tA, tB, clip);
+    } else if (r.rank >= 2) {
+      paintQuad(G.markW, a, b, hw - 0.35, 0.14, null, tA, tB, clip);
+      paintQuad(G.markW, a, b, -hw + 0.35, 0.14, null, tA, tB, clip);
       if (lpd >= 2) {
-        paintQuad(G.markY, a, b, 0.15, 0.12, null, tA, tB);
-        paintQuad(G.markY, a, b, -0.15, 0.12, null, tA, tB);
+        paintQuad(G.markY, a, b, 0.15, 0.12, null, tA, tB, clip);
+        paintQuad(G.markY, a, b, -0.15, 0.12, null, tA, tB, clip);
         const lw = (hw - 0.35) / lpd;
         for (let k = 1; k < lpd; k++) {
-          paintQuad(G.markW, a, b, lw * k, 0.12, [3, 6], tA, tB);
-          paintQuad(G.markW, a, b, -lw * k, 0.12, [3, 6], tA, tB);
+          paintQuad(G.markW, a, b, lw * k, 0.12, [3, 6], tA, tB, clip);
+          paintQuad(G.markW, a, b, -lw * k, 0.12, [3, 6], tA, tB, clip);
         }
       } else {
-        paintQuad(G.markW, a, b, 0, 0.12, [3, 5], tA, tB);
+        paintQuad(G.markW, a, b, 0, 0.12, [3, 5], tA, tB, clip);
       }
     }
   }

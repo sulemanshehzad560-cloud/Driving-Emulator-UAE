@@ -22,7 +22,7 @@ export class TrafficLights {
   }
 
   buildGeometry() {
-    const pole = new THREE.CylinderGeometry(0.12, 0.16, 6.2, 10);
+    const pole = new THREE.CylinderGeometry(0.12, 0.16, 6.2, 8, 1, true);
     pole.translate(0, 3.1, 0);
     const arm = new THREE.CylinderGeometry(0.08, 0.1, 1, 8);
     arm.rotateZ(Math.PI / 2);
@@ -30,8 +30,8 @@ export class TrafficLights {
     const head = new THREE.BoxGeometry(0.42, 1.3, 0.32);
     const plate = new THREE.BoxGeometry(0.66, 1.56, 0.03);
     plate.translate(0, 0, -0.18);
-    const lens = new THREE.CircleGeometry(0.15, 16);
-    const visor = new THREE.CylinderGeometry(0.17, 0.17, 0.22, 12, 1, true, 0, Math.PI);
+    const lens = new THREE.CircleGeometry(0.15, 12);
+    const visor = new THREE.CylinderGeometry(0.17, 0.17, 0.22, 6, 1, true, 0, Math.PI);
     visor.rotateX(Math.PI / 2);
     visor.rotateZ(Math.PI);
     return { pole, arm, head, plate, lens, visor };
@@ -73,11 +73,37 @@ export class TrafficLights {
       if (!this.byNode.has(ap.id)) this.byNode.set(ap.id, []);
       this.byNode.get(ap.id).push(ap);
     }
-    const group = this.buildMeshes(aps);
+    // one mesh set per 250 m cell: each is frustum culled and hidden beyond view range
+    const cells = new Map();
+    for (const ap of aps) {
+      const k = `${Math.floor(ap.x / 250)}_${Math.floor(ap.z / 250)}`;
+      if (!cells.has(k)) cells.set(k, []);
+      cells.get(k).push(ap);
+    }
+    const group = new THREE.Group();
+    group.userData.obstacles = [];
+    for (const list of cells.values()) {
+      const g = this.buildMeshes(list);
+      let cx = 0, cz = 0;
+      for (const ap of list) { cx += ap.x / list.length; cz += ap.z / list.length; }
+      g.userData.centre = [cx, cz];
+      group.userData.obstacles.push(...g.userData.obstacles);
+      group.add(g);
+    }
     this.scene.add(group);
     this.byTile.set(tile.key, { aps, group });
     this.approaches.push(...aps);
     this.update(this.time, true);
+  }
+
+  /** Hide signal cells further than r from (X, Z). */
+  cull(X, Z, r = 450) {
+    for (const { group } of this.byTile.values()) {
+      for (const g of group.children) {
+        const [cx, cz] = g.userData.centre;
+        g.visible = Math.hypot(cx - X, cz - Z) < r + 180;
+      }
+    }
   }
 
   /** Solid signal poles of a tile: flat [x, z, r, ...]. */

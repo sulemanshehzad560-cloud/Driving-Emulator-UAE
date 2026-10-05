@@ -54,6 +54,34 @@ export class Props {
     }
     G.palmCrown = merge(fronds);
     G.palmCrown.computeVertexNormals();
+    // distant palm: 5-sided bent trunk + 7 two-segment fronds (~50 triangles instead of ~330)
+    const trunkLo = new THREE.CylinderGeometry(0.22, 0.34, 8, 5, 2, true);
+    trunkLo.translate(0, 4, 0);
+    const lp = trunkLo.attributes.position, luv = trunkLo.attributes.uv;
+    for (let i = 0; i < lp.count; i++) {
+      const y = lp.getY(i);
+      lp.setX(i, lp.getX(i) + (y / 8) ** 2 * 0.6);
+      luv.setXY(i, luv.getX(i) * 2, (y / 8) * 12);
+    }
+    trunkLo.computeVertexNormals();
+    G.palmTrunkLo = trunkLo;
+    const frondsLo = [];
+    for (let i = 0; i < 7; i++) {
+      const len = 3.6 + (i % 3) * 0.3;
+      const g = new THREE.PlaneGeometry(1.6, len, 1, 2);
+      const p = g.attributes.position;
+      for (let k = 0; k < p.count; k++) {
+        const t = Math.min(1, Math.max(0, (p.getY(k) + len / 2) / len));
+        p.setY(k, t * len);
+        p.setZ(k, -(t ** 1.8) * len * 0.55);
+      }
+      g.rotateX(-Math.PI / 2 + 0.45);
+      g.rotateY((i / 7) * Math.PI * 2);
+      g.translate(0.6, 7.9, 0);
+      frondsLo.push(g);
+    }
+    G.palmCrownLo = merge(frondsLo);
+    G.palmCrownLo.computeVertexNormals();
 
     // ---- street lights
     const pole = new THREE.CylinderGeometry(0.09, 0.16, 11, 8);
@@ -67,7 +95,17 @@ export class Props {
       return a;
     };
     G.lampSingle = merge([pole.clone(), base.clone(), arm(1)]);
-    G.lampDouble = merge([pole, base, arm(1), arm(-1)]);
+    G.lampDouble = merge([pole.clone(), base, arm(1), arm(-1)]);
+    // distant lamp post: square pole + flat arms
+    const poleLo = new THREE.CylinderGeometry(0.09, 0.16, 11, 4, 1, true);
+    poleLo.translate(0, 5.5, 0);
+    const armLo = (dir) => {
+      const a = new THREE.BoxGeometry(2.6, 0.08, 0.08);
+      a.translate(dir * 1.3, 11, 0);
+      return a;
+    };
+    G.lampSingleLo = merge([poleLo.clone(), armLo(1)]);
+    G.lampDoubleLo = merge([poleLo, armLo(1), armLo(-1)]);
     const head = (dir) => {
       const h = new THREE.BoxGeometry(0.9, 0.14, 0.34);
       h.translate(dir * 2.6, 10.95, 0);
@@ -174,6 +212,7 @@ export class Props {
     const v = new THREE.Vector3();
     const s = new THREE.Vector3();
     const shadow = !!opts.shadows;
+    const far = opts.lod === 'far';
 
     const instanced = (geo, mat, arr, stride, fill, castShadow = shadow) => {
       if (!arr || !arr.length) return null;
@@ -194,18 +233,24 @@ export class Props {
       m.compose(v.set(a[o], y, a[o + 1]), q, s.set(scale, scale, scale));
     };
 
-    instanced(G.palmTrunk, M.palmTrunk, inst.palm, 4, (a, o, m) => placeYaw(a, o, m, a[o + 3]));
-    instanced(G.palmCrown, M.palmLeaf, inst.palm, 4, (a, o, m) => placeYaw(a, o, m, a[o + 3]));
+    instanced(far ? G.palmTrunkLo : G.palmTrunk, M.palmTrunk, inst.palm, 4, (a, o, m) => placeYaw(a, o, m, a[o + 3]));
+    instanced(far ? G.palmCrownLo : G.palmCrown, M.palmLeaf, inst.palm, 4, (a, o, m) => placeYaw(a, o, m, a[o + 3]));
     // lamps: split singles and doubles
     if (inst.lamp) {
       const singles = [], doubles = [];
       for (let i = 0; i < inst.lamp.length; i += 4) (inst.lamp[i + 3] ? doubles : singles).push(inst.lamp[i], inst.lamp[i + 1], inst.lamp[i + 2]);
-      instanced(G.lampSingle, M.pole, singles, 3, (a, o, m) => placeYaw(a, o, m));
+      instanced(far ? G.lampSingleLo : G.lampSingle, M.pole, singles, 3, (a, o, m) => placeYaw(a, o, m));
       instanced(G.headSingle, M.lampHead, singles, 3, (a, o, m) => placeYaw(a, o, m), false);
-      instanced(G.lampDouble, M.pole, doubles, 3, (a, o, m) => placeYaw(a, o, m));
+      instanced(far ? G.lampDoubleLo : G.lampDouble, M.pole, doubles, 3, (a, o, m) => placeYaw(a, o, m));
       instanced(G.headDouble, M.lampHead, doubles, 3, (a, o, m) => placeYaw(a, o, m), false);
     }
     instanced(G.pool, M.lightPool, inst.pool, 3, (a, o, m) => m.makeTranslation(a[o], 0, a[o + 1]), false);
+    if (far) {
+      // only what reads from a distance: skyline kit and overhead gantries
+      this.skyline(inst, instanced, q, v, s, up);
+      for (const gt of inst.gantry || []) group.add(this.gantry(gt));
+      return group;
+    }
     if (inst.speed) {
       for (const [speed, arr] of Object.entries(inst.speed)) {
         if (!this.speedMats) this.speedMats = {};
@@ -221,6 +266,14 @@ export class Props {
     instanced(G.utility, M.utility, inst.utility, 3, (a, o, m) => placeYaw(a, o, m), false);
     instanced(G.shelterFrame, M.shelterFrame, inst.shelter, 3, (a, o, m) => placeYaw(a, o, m));
     instanced(G.shelterGlass, M.shelterGlass, inst.shelter, 3, (a, o, m) => placeYaw(a, o, m), false);
+    this.skyline(inst, instanced, q, v, s, up);
+    for (const gt of inst.gantry || []) group.add(this.gantry(gt));
+    return group;
+  }
+
+  skyline(inst, instanced, q, v, s, up) {
+    const M = this.M;
+    const G = this.geo;
     instanced(G.rooftop, M.rooftop, inst.rooftop, 7, (a, o, m) => {
       q.setFromAxisAngle(up, a[o + 3]);
       m.compose(v.set(a[o], a[o + 1], a[o + 2]), q, s.set(a[o + 4], a[o + 5], a[o + 6]));
@@ -239,8 +292,6 @@ export class Props {
       instanced(G.minaretTop, M.dome, minarets, 5, (a, o, m) => m.compose(v.set(a[o], a[o + 1] + a[o + 4], a[o + 2]), q.identity(), s.set(a[o + 3], a[o + 3], a[o + 3])));
       instanced(G.spire, M.pole, spires, 5, (a, o, m) => m.compose(v.set(a[o], a[o + 1], a[o + 2]), q.identity(), s.set(a[o + 3], a[o + 4], a[o + 3])));
     }
-    for (const gt of inst.gantry || []) group.add(this.gantry(gt));
-    return group;
   }
 
   gantry({ x, z, rot, width, name, ref }) {
