@@ -14,3 +14,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "UAEDrive"
 include ':app'
+// install-time Play Asset Delivery pack with the big assets (UAE world, 2K/4K art, HD cars)
+include ':gamedata'

@@ -190,11 +190,19 @@ export class WorldMaterials {
     return t;
   }
 
+  /** Texture files at the detail tier of the current preset (1K / 2K High / 4K Ultra). */
+  tierFiles(entry) {
+    const t = this.q.tex || '1k';
+    if (t === '4k' && entry.files4k) return entry.files4k;
+    if ((t === '2k' || t === '4k') && entry.files2k) return entry.files2k;
+    return entry.files;
+  }
+
   /** Photographic material set if the art pack has it, else null. */
   photo(slot) {
     const m = this.art?.manifest?.materials?.[slot];
     if (!m || this.q.name === 'Low') return null;
-    const f = m.files;
+    const f = this.tierFiles(m);
     const url = (k) => `${this.art.base}/${f[k]}`;
     return {
       map: this.tex(url('color')),
@@ -218,15 +226,16 @@ export class WorldMaterials {
     M.road = layered(new THREE.MeshStandardMaterial({ ...asp, color: 0x9c9c9c, roughness: 1, metalness: 0, normalScale: new THREE.Vector2(0.9, 0.9) }), 2);
     roadShader(M.road);
     const worn = this.photo('asphalt_worn') || asp;
-    M.junction = layered(new THREE.MeshStandardMaterial({ ...worn, color: 0x969696, roughness: 1, metalness: 0 }), 3);
+    // junction patches use exactly the road surface so they blend in (no visible discs)
+    M.junction = layered(new THREE.MeshStandardMaterial({ ...asp, color: 0x9c9c9c, roughness: 1, metalness: 0, normalScale: new THREE.Vector2(0.9, 0.9) }), 3);
     roadShader(M.junction);
     M.shoulder = layered(new THREE.MeshStandardMaterial({ ...worn, color: 0x8a8580, roughness: 1 }), 1);
 
     // ---------------- lane paint (worn)
-    const wear = this.tex(TG.paintWear(256), { srgb: false });
-    M.markW = layered(new THREE.MeshStandardMaterial({ color: 0xf4f4f0, roughness: 0.6, alphaMap: wear, alphaTest: 0.5, emissive: 0x1a1a1a }), 5);
-    M.markY = layered(new THREE.MeshStandardMaterial({ color: 0xf2b800, roughness: 0.6, alphaMap: wear, alphaTest: 0.5, emissive: 0x1a1200 }), 5);
-    M.markW.defines = { USE_UV: '' };
+    // solid paint with a soft wear tint (a cut-out alpha mask aliased into ragged, broken lines at a distance)
+    const wear = this.tex(TG.paintWear(256));
+    M.markW = layered(new THREE.MeshStandardMaterial({ color: 0xf4f4f0, map: wear, roughness: 0.6, emissive: 0x141414 }), 5);
+    M.markY = layered(new THREE.MeshStandardMaterial({ color: 0xf2b800, map: wear, roughness: 0.6, emissive: 0x141000 }), 5);
 
     // ---------------- pavement & kerbs
     const pv = this.photo('pavers') || (() => {
@@ -316,7 +325,8 @@ export class WorldMaterials {
       await Promise.all(Object.values(facs).map(async (f) => {
         try {
           const base = this.art.base;
-          const img = await this.loader.loadAsync(`${base}/${f.files.color}`);
+          const files = this.tierFiles(f);
+          const img = await this.loader.loadAsync(`${base}/${files.color}`);
           const info = analyseFacade(img.image);
           if (info.dark) return; // night photos are not usable as daytime albedo
           img.wrapS = img.wrapT = THREE.RepeatWrapping;
@@ -324,8 +334,8 @@ export class WorldMaterials {
           img.anisotropy = this.maxAniso;
           const mat = new THREE.MeshStandardMaterial({
             map: img,
-            normalMap: f.files.normal ? this.tex(`${base}/${f.files.normal}`, { srgb: false }) : null,
-            roughnessMap: f.files.rough ? this.tex(`${base}/${f.files.rough}`, { srgb: false }) : null,
+            normalMap: files.normal ? this.tex(`${base}/${files.normal}`, { srgb: false }) : null,
+            roughnessMap: files.rough ? this.tex(`${base}/${files.rough}`, { srgb: false }) : null,
             vertexColors: true,
             roughness: 1,
             metalness: 0.15,

@@ -117,6 +117,11 @@ export class Enforcement {
     this.rest.push(...rec.rest);
   }
 
+  /** Solid camera poles and gantry legs of a tile: flat [x, z, r, ...]. */
+  obstaclesFor(tileKey) {
+    return this.byTile.get(tileKey)?.obstacles || [];
+  }
+
   removeTile(tile) {
     const rec = this.byTile.get(tile.key);
     if (!rec) return;
@@ -133,12 +138,14 @@ export class Enforcement {
 
   buildMeshes(rec) {
     const M = this.mats;
+    rec.obstacles = [];
     const g = rec.group;
     for (const c of rec.cameras) {
       const rx = -c.dz, rz = c.dx;
       const off = c.road.width / 2 + 1.8;
       const o = new THREE.Group();
       o.position.set(c.x + rx * off, 0, c.z + rz * off);
+      rec.obstacles.push(c.x + rx * off, c.z + rz * off, 0.25);
       o.rotation.y = Math.atan2(-c.dx, -c.dz);
       const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 4.6, 10), M.pole);
       pole.position.y = 2.3;
@@ -156,6 +163,11 @@ export class Enforcement {
       const o = new THREE.Group();
       o.position.set(t.x, 0, t.z);
       o.rotation.y = Math.atan2(-t.dx, -t.dz);
+      for (const s of [-1, 1]) {
+        // gantry legs stand on both sides of the carriageway (local x = right of travel)
+        const lx = s * hw;
+        rec.obstacles.push(t.x + -t.dz * lx, t.z + t.dx * lx, 0.45);
+      }
       for (const s of [-1, 1]) {
         const leg = new THREE.Mesh(new THREE.BoxGeometry(0.5, 7.4, 0.5), M.gantry);
         leg.position.set(s * hw, 3.7, 0);

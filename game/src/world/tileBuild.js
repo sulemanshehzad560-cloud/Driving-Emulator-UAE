@@ -281,8 +281,9 @@ export function buildTile(T, opts) {
     if (q.props) roadProps(r, pts, hw, junctionR, inst, rand, inBuilding, motorway);
   }
   for (const [n, rad] of junctionR) {
-    disc(G.junction, px[n], pz[n], rad + 0.6, 0.06, 20, true);
-    disc(G.sidewalk, px[n], pz[n], rad + 3.6, 0.011, 16);
+    // junction patch: the widest approach's half-width (+0.2 m to close seams), same asphalt as the roads
+    disc(G.junction, px[n], pz[n], rad - 0.8, 0.06, 24, true);
+    disc(G.sidewalk, px[n], pz[n], rad + 2.2, 0.011, 20);
   }
 
   // ---------------- signals: stop lines + zebra crossings on every approach
@@ -333,6 +334,9 @@ export function buildTile(T, opts) {
       }
     }
   }
+
+  // ---------------- keep the carriageway clear: nothing solid may stand on a road
+  clearRoads(inst, roads, px, pz);
 
   // ---------------- minimap raster data (drawn on the main thread or in an OffscreenCanvas)
   const meshes = {};
@@ -630,6 +634,70 @@ function markings(G, r, pts, junctionR) {
       }
     }
   }
+}
+
+/**
+ * Remove street furniture that ended up on a carriageway (OSM trees mapped in
+ * a road, lamps on an unmapped median, shelters snapped too close...).
+ * Poles/trees need 0.6 m clearance from the road edge; parked cars must sit
+ * in the kerb lane (their centre at least 0.9 m inside the edge, never mid-road).
+ */
+function clearRoads(inst, roads, px, pz) {
+  const CELL = 20;
+  const grid = new Map();
+  const segs = [];
+  for (const r of roads) {
+    const hw = r.width / 2;
+    for (let i = 1; i < r.n.length; i++) {
+      const ax = px[r.n[i - 1]], az = pz[r.n[i - 1]], bx = px[r.n[i]], bz = pz[r.n[i]];
+      const seg = { ax, az, bx, bz, hw };
+      const idx = segs.push(seg) - 1;
+      const i0 = Math.floor((Math.min(ax, bx) - hw - 3) / CELL), i1 = Math.floor((Math.max(ax, bx) + hw + 3) / CELL);
+      const j0 = Math.floor((Math.min(az, bz) - hw - 3) / CELL), j1 = Math.floor((Math.max(az, bz) + hw + 3) / CELL);
+      for (let a = i0; a <= i1; a++) {
+        for (let b = j0; b <= j1; b++) {
+          const k = a * 100003 + b;
+          if (!grid.has(k)) grid.set(k, []);
+          grid.get(k).push(idx);
+        }
+      }
+    }
+  }
+  // signed distance to the nearest road edge (negative = on the carriageway)
+  const edgeDist = (x, z) => {
+    let best = Infinity;
+    const list = grid.get(Math.floor(x / CELL) * 100003 + Math.floor(z / CELL));
+    if (!list) return best;
+    for (const idx of list) {
+      const g = segs[idx];
+      const dx = g.bx - g.ax, dz = g.bz - g.az;
+      const t = Math.max(0, Math.min(1, ((x - g.ax) * dx + (z - g.az) * dz) / (dx * dx + dz * dz || 1)));
+      best = Math.min(best, Math.hypot(x - g.ax - dx * t, z - g.az - dz * t) - g.hw);
+    }
+    return best;
+  };
+  const filter = (arr, stride, ok) => {
+    if (!arr || !arr.length) return arr;
+    const out = [];
+    for (let i = 0; i < arr.length; i += stride) if (ok(arr[i], arr[i + 1], i)) for (let k = 0; k < stride; k++) out.push(arr[i + k]);
+    arr.length = 0;
+    for (const v of out) arr.push(v);
+    return arr;
+  };
+  const clear = (m) => (x, z) => edgeDist(x, z) > m;
+  filter(inst.palm, 4, clear(0.8));
+  filter(inst.lamp, 4, clear(0.4));
+  filter(inst.pool, 3, () => true);
+  filter(inst.bin, 3, clear(0.5));
+  filter(inst.utility, 3, clear(0.7));
+  filter(inst.bench, 3, clear(1.0));
+  filter(inst.shelter, 3, clear(1.2));
+  if (inst.speed) for (const k of Object.keys(inst.speed)) filter(inst.speed[k], 3, clear(0.25));
+  // parked cars: centre inside the kerb lane only (between 0.9 m and 2.6 m in from the edge) or off-road
+  filter(inst.parked, 4, (x, z) => {
+    const d = edgeDist(x, z);
+    return d > 1.2 || (d < -0.9 && d > -2.6);
+  });
 }
 
 function nearestSeg(roads, px, pz, x, z) {

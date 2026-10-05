@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Download CC0 photographic assets for UAE Drive and prepare them for phones.
 
-* HDR skies (Poly Haven, CC0)       -> art/hdri/<slot>.hdr       (1k)
-* PBR materials (ambientCG, CC0)    -> art/tex/<slot>_{color,normal,rough}.jpg
-                                        (resized to 1024 / 512 px)
+* HDR skies (Poly Haven, CC0)       -> art/hdri/<slot>.hdr (1k), <slot>_2k.hdr, <slot>_4k.hdr
+* PBR materials (ambientCG, CC0)    -> art/tex/<slot>_{color,normal,rough,ao}.jpg (1K, phones)
+                                       art/tex2k/... (High) and art/tex4k/... (Ultra, road/ground)
+The game picks the tier that matches the device's graphics preset.
 Writes art/manifest.json describing what was obtained (missing items are
 skipped; the game falls back to procedural textures for them).
 """
@@ -27,7 +28,15 @@ HDRIS = {
     'sunset': ['belfast_sunset_puresky', 'qwantani_sunset_puresky', 'kloofendal_misty_morning_puresky', 'spruit_sunrise'],
     'night': ['kloppenheim_02_puresky', 'satara_night', 'moonless_golf', 'dikhololo_night'],
     'overcast': ['kloofendal_overcast_puresky', 'overcast_soil_puresky', 'kloofendal_overcast'],
+    # extra times of day
+    'dawn': ['spruit_sunrise', 'kloofendal_misty_morning_puresky', 'qwantani_dawn_puresky', 'sunflowers_puresky'],
+    'golden': ['qwantani_late_afternoon_puresky', 'kloofendal_48d_partly_cloudy_puresky', 'belfast_sunset_puresky'],
+    'dusk': ['qwantani_dusk_2_puresky', 'qwantani_dusk_1_puresky', 'belfast_sunset_puresky', 'spruit_sunrise'],
+    'clearnight': ['qwantani_moon_noon_puresky', 'kloppenheim_02_puresky', 'satara_night', 'moonlit_golf'],
 }
+HDRI_TIERS = ['1k', '2k', '4k']
+# materials that cover most of the screen get 4K for Ultra
+HD4K = {'asphalt', 'asphalt_worn', 'pavers', 'sand', 'grass', 'concrete'}
 
 # slot: (preferred ambientCG ids, search query, size)
 MATERIALS = {
@@ -41,7 +50,7 @@ MATERIALS = {
     'metal': (['Metal032', 'CorrugatedSteel005A', 'Metal009'], 'corrugated', 512),
     'tiles': (['Tiles074', 'Tiles101', 'Tiles012'], 'tiles', 512),
 }
-FACADES = 12  # take the most popular ambientCG facade materials
+FACADES = 20  # take the most popular ambientCG facade materials
 
 
 def get(url, tries=4):
@@ -64,17 +73,24 @@ def fetch_hdri(slot, ids, manifest):
     for hid in ids:
         info = get_json(f'https://api.polyhaven.com/files/{hid}')
         try:
-            url = info['hdri']['1k']['hdr']['url']
+            urls = {t: info['hdri'][t]['hdr']['url'] for t in HDRI_TIERS if t in info['hdri']}
         except (TypeError, KeyError):
             continue
-        data = get(url)
-        if not data:
+        if '1k' not in urls:
             continue
-        path = os.path.join(OUT, 'hdri', f'{slot}.hdr')
-        with open(path, 'wb') as f:
-            f.write(data)
-        manifest['hdri'][slot] = {'file': f'hdri/{slot}.hdr', 'source': f'https://polyhaven.com/a/{hid}', 'id': hid}
-        print(f'HDRI {slot}: {hid} ({len(data) / 1e6:.1f} MB)', flush=True)
+        files = {}
+        for tier, url in urls.items():
+            data = get(url)
+            if not data:
+                continue
+            name = f'{slot}.hdr' if tier == '1k' else f'{slot}_{tier}.hdr'
+            with open(os.path.join(OUT, 'hdri', name), 'wb') as f:
+                f.write(data)
+            files[tier] = f'hdri/{name}'
+            print(f'HDRI {slot} {tier}: {hid} ({len(data) / 1e6:.1f} MB)', flush=True)
+        if '1k' not in files:
+            continue
+        manifest['hdri'][slot] = {'file': files['1k'], 'tiers': files, 'source': f'https://polyhaven.com/a/{hid}', 'id': hid}
         return True
     print(f'HDRI {slot}: none available', flush=True)
     return False
@@ -90,17 +106,17 @@ def acg_search(query=None, ids=None, limit=6):
     return (data or {}).get('foundAssets', [])
 
 
-def acg_zip_link(asset):
+def acg_zip_link(asset, res='1K'):
     try:
         for d in asset['downloadFolders']['default']['downloadFiletypeCategories']['zip']['downloads']:
-            if d.get('attribute') == '1K-JPG':
+            if d.get('attribute') == f'{res}-JPG':
                 return d['downloadLink']
     except (KeyError, TypeError):
         pass
     return None
 
 
-def save_maps(slot, asset_id, zbytes, size, manifest, section):
+def save_maps(slot, asset_id, zbytes, size, manifest, section, folder='tex', key='files'):
     z = zipfile.ZipFile(io.BytesIO(zbytes))
     names = z.namelist()
     pick = {}
@@ -122,12 +138,26 @@ def save_maps(slot, asset_id, zbytes, size, manifest, section):
         im = im.convert('RGB' if kind in ('color', 'normal') else 'L')
         if max(im.size) > size:
             im = im.resize((size, size), Image.LANCZOS)
-        out = os.path.join(OUT, 'tex', f'{slot}_{kind}.jpg')
+        os.makedirs(os.path.join(OUT, folder), exist_ok=True)
+        out = os.path.join(OUT, folder, f'{slot}_{kind}.jpg')
         im.save(out, quality=86 if kind != 'normal' else 92, optimize=True)
-        files[kind] = f'tex/{slot}_{kind}.jpg'
-    manifest[section][slot] = {'files': files, 'source': f'https://ambientcg.com/view?id={asset_id}', 'id': asset_id}
-    print(f'material {slot}: {asset_id} {sorted(files)}', flush=True)
+        files[kind] = f'{folder}/{slot}_{kind}.jpg'
+    entry = manifest[section].setdefault(slot, {'source': f'https://ambientcg.com/view?id={asset_id}', 'id': asset_id})
+    entry[key] = files
+    print(f'material {slot} [{folder}]: {asset_id} {sorted(files)}', flush=True)
     return True
+
+
+def fetch_tiers(slot, asset, manifest, section):
+    """High-detail versions of a chosen material: 2K for High, 4K for Ultra (large surfaces only)."""
+    tiers = [('2K', 2048, 'tex2k', 'files2k')]
+    if slot in HD4K:
+        tiers.append(('4K', 4096, 'tex4k', 'files4k'))
+    for res, size, folder, key in tiers:
+        link = acg_zip_link(asset, res)
+        zb = get(link) if link else None
+        if zb:
+            save_maps(slot, asset['assetId'], zb, size, manifest, section, folder, key)
 
 
 def fetch_material(slot, ids, query, size, manifest):
@@ -142,6 +172,7 @@ def fetch_material(slot, ids, query, size, manifest):
             continue
         zb = get(link)
         if zb and save_maps(slot, a['assetId'], zb, size, manifest, 'materials'):
+            fetch_tiers(slot, a, manifest, 'materials')
             return True
     print(f'material {slot}: none available', flush=True)
     return False
@@ -158,6 +189,7 @@ def fetch_facades(manifest):
         link = acg_zip_link(a)
         zb = get(link) if link else None
         if zb and save_maps(f'facade{n}', a['assetId'], zb, 1024, manifest, 'facades'):
+            fetch_tiers(f'facade{n}', a, manifest, 'facades')
             n += 1
     print(f'facades: {n}', flush=True)
 

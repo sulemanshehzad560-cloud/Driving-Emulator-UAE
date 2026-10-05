@@ -1,22 +1,21 @@
-// Fictional vehicles inspired by German luxury saloons/SUVs and supercars.
-// Names are deliberately generic: real manufacturer names, badges and designs
-// are trademarks and would need a licence before they can ship in a game.
+// Player cars: full 3D models (see credits) plus the procedural G 63-style 4x4.
+// Names are original: real manufacturer names, badges and designs are
+// trademarks and would need a licence before they can ship in a game.
 
 export const CARS = [
   {
-    id: 'kaiser-s', name: 'Kaiser S-Line Executive', brand: 'KAISER', cls: 'Luxury Saloon', style: 'sedan',
-    price: 0, topSpeed: 250, accel: 5.2, handling: 0.72, braking: 0.8, grip: 0.8, mass: 2100,
-    paints: [0x0b0d10, 0xc7ccd1, 0x1d2b44, 0xf2f2f0, 0x5b1320],
+    id: 'nova-gt', name: 'Nova GT Coupé', brand: 'NOVA', cls: 'Grand Tourer', style: 'gt',
+    price: 0, topSpeed: 290, accel: 4.2, handling: 0.84, braking: 0.86, grip: 0.86, mass: 1640,
+    paints: [0x8fb4e3, 0xe8e8ea, 0x0b0b0c, 0x7a0f14, 0x2f4f3a],
+    // "FREE AI based ConceptCar 049" by Unity Fan (Sketchfab, free licence for use in games)
+    model: { url: 'cars/nova.glb', front: '+z', tireMat: 'rubber|tire', paint: ['silver'], glass: 'glass', signal: 'turnlights', brake: 'taillights_cover', hideMat: 'shadow' },
   },
   {
-    id: 'kaiser-c', name: 'Kaiser C-Coupé', brand: 'KAISER', cls: 'Sports Coupé', style: 'coupe',
-    price: 3500, topSpeed: 270, accel: 4.3, handling: 0.8, braking: 0.85, grip: 0.84, mass: 1750,
-    paints: [0xb3b8bd, 0x0c2a66, 0xd4001a, 0x101010, 0xe8e3d6],
-  },
-  {
-    id: 'kaiser-g', name: 'Kaiser G-Line 4x4', brand: 'KAISER', cls: 'Off-road Icon', style: 'boxy',
-    price: 6000, topSpeed: 220, accel: 4.8, handling: 0.6, braking: 0.72, grip: 0.76, mass: 2560,
-    paints: [0x151515, 0xf4f4f4, 0x4e5a3a, 0x7d7f80, 0xc9b08a],
+    id: 'meridian-gts', name: 'Meridian GT-S', brand: 'MERIDIAN', cls: 'Luxury Coupé', style: 'gt',
+    price: 4500, topSpeed: 300, accel: 3.9, handling: 0.85, braking: 0.87, grip: 0.87, mass: 1720,
+    paints: [0x0b0b0c, 0xe8e8ea, 0x23395b, 0x6b1420, 0x8a8d91],
+    // "Concept Car 037" by Unity Fan (Sketchfab, CC BY 4.0)
+    model: { url: 'cars/meridian.glb', front: '+z', tireMat: 'rubber|tire', paint: ['body_color_supra.001'], hideMat: 'shadow' },
   },
   {
     id: 'kaiser-g63', name: 'Kaiser G 63 Night Edition', brand: 'KAISER', cls: 'Performance 4x4', style: 'g63',
@@ -24,14 +23,25 @@ export const CARS = [
     paints: [0x0b0b0c, 0x2b2e31, 0xf2f2f2, 0x4a5a3c, 0x7a0f14],
   },
   {
-    id: 'kaiser-gle', name: 'Kaiser GL Grand SUV', brand: 'KAISER', cls: 'Luxury SUV', style: 'suv',
-    price: 5000, topSpeed: 240, accel: 5.4, handling: 0.66, braking: 0.76, grip: 0.78, mass: 2400,
-    paints: [0x2f3439, 0xffffff, 0x0e1a2e, 0x8a1c1c, 0xa7a9ac],
+    id: 'corsa-40', name: 'Corsa 40 Sport', brand: 'CORSA', cls: 'Sports Car', style: 'coupe',
+    price: 12000, topSpeed: 315, accel: 3.3, handling: 0.89, braking: 0.89, grip: 0.89, mass: 1520,
+    paints: [0x0b0b0c, 0xd4001a, 0xf2f2f2, 0x0a84ff, 0xffb000],
+    // "FREE Concept Car 040" by Unity Fan (Sketchfab, free licence for use in games)
+    model: { url: 'cars/corsa.glb', front: '+z', tireMat: 'rubber|tire', paint: ['body_color_supra.001'], brake: 'chrome_StopLight', signal: 'chrome_turnlight', hideMat: 'shadow' },
   },
   {
-    id: 'kaiser-gt', name: 'Kaiser GT Black Edition', brand: 'KAISER', cls: 'Grand Tourer', style: 'gt',
-    price: 12000, topSpeed: 318, accel: 3.2, handling: 0.88, braking: 0.9, grip: 0.9, mass: 1650,
-    paints: [0x0a0a0a, 0xf7c600, 0x3a4a5c, 0xe8e8e8, 0x16632f],
+    id: 'atlas-r', name: 'Atlas R Desert Rover', brand: 'ATLAS', cls: 'Off-road Concept', style: 'suv',
+    price: 14000, topSpeed: 250, accel: 4.2, handling: 0.72, braking: 0.8, grip: 0.82, mass: 2300,
+    paints: [0xd4001a, 0x0b0b0c, 0xf2f2f2, 0x0a84ff, 0xffb000],
+    // "FREE Concept Car 006" by Unity Fan (Sketchfab, free licence for use in games)
+    model: { url: 'cars/atlas.glb', front: '+z', pose: { clip: 'Armature|ArmatureAction', time: 0 }, tireMat: 'wheel_nitto|rubber', paint: ['body'], glass: 'glass', head: 'headlights', brake: 'taillights_cover', hideMat: 'shadow' },
+  },
+  {
+    id: 'orion-rs', name: 'Orion RS', brand: 'ORION', cls: 'Supercar', style: 'super',
+    price: 19000, topSpeed: 330, accel: 2.9, handling: 0.91, braking: 0.91, grip: 0.91, mass: 1480,
+    paints: [0x0b0b0c, 0xff5a00, 0xe8e8ea, 0x16632f, 0x1d3f8f],
+    // "FREE Concept Car 038" by Unity Fan (Sketchfab, free licence for use in games)
+    model: { url: 'cars/orion.glb', front: '+z', tireMat: 'rubber|tire', paint: ['body_color_supra.001'], hideMat: 'shadow' },
   },
   {
     id: 'aurora-vision', name: 'Aurora Vision GT', brand: 'AURORA', cls: 'Electric Hypercar', style: 'super',
@@ -46,17 +56,10 @@ export const CARS = [
   },
   {
     id: 'vortex-s', name: 'Vortex S Silverline', brand: 'VORTEX', cls: 'Hypercar', style: 'super',
-    price: 30000, topSpeed: 340, accel: 2.5, handling: 0.94, braking: 0.94, grip: 0.94, mass: 1450,
+    price: 32000, topSpeed: 340, accel: 2.5, handling: 0.94, braking: 0.94, grip: 0.94, mass: 1450,
     paints: [0xc9ccd1, 0x0b0b0c, 0xb3121e, 0x1b3a8a, 0xf2b705],
     // "FREE Concept Car 025" by Unity Fan (Sketchfab, free licence for use in games)
     model: { url: 'cars/vortex.glb', front: '+z', tireMat: 'rubber|tire', paint: ['body_color_supra.002'], head: 'light', brake: 'taillights', hideMat: 'shadow' },
-  },
-  {
-    id: 'nova-gt', name: 'Nova GT Coupé', brand: 'NOVA', cls: 'Grand Tourer', style: 'gt',
-    price: 16000, topSpeed: 310, accel: 3.4, handling: 0.87, braking: 0.88, grip: 0.88, mass: 1640,
-    paints: [0x8fb4e3, 0xe8e8ea, 0x0b0b0c, 0x7a0f14, 0x2f4f3a],
-    // "FREE AI based ConceptCar 049" by Unity Fan (Sketchfab, free licence for use in games)
-    model: { url: 'cars/nova.glb', front: '+z', tireMat: 'rubber|tire', paint: ['silver'], glass: 'glass', signal: 'turnlights', brake: 'taillights_cover', hideMat: 'shadow' },
   },
   {
     id: 'zenith-x', name: 'Zenith X Track Edition', brand: 'ZENITH', cls: 'Track Hypercar', style: 'hyper',
@@ -64,28 +67,6 @@ export const CARS = [
     paints: [0x2dd4bf, 0xff4d00, 0xe8e8ea, 0x7c3aed, 0x0b0b0c],
     // "FREE AI based ConceptCar 050" by Unity Fan (Sketchfab, free licence for use in games)
     model: { url: 'cars/zenith.glb', front: '+z', tireMat: 'rubber|tire', paint: ['body'], glass: 'glass', head: 'lights', brake: 'taillights', hideMat: 'shadow' },
-  },
-  {
-    id: 'atlas-r', name: 'Atlas R Desert Rover', brand: 'ATLAS', cls: 'Off-road Concept', style: 'suv',
-    price: 14000, topSpeed: 250, accel: 4.2, handling: 0.72, braking: 0.8, grip: 0.82, mass: 2300,
-    paints: [0xd4001a, 0x0b0b0c, 0xf2f2f2, 0x0a84ff, 0xffb000],
-    // "FREE Concept Car 006" by Unity Fan (Sketchfab, free licence for use in games)
-    model: { url: 'cars/atlas.glb', front: '+z', pose: { clip: 'Armature|ArmatureAction', time: 0 }, tireMat: 'wheel_nitto|rubber', paint: ['body'], glass: 'glass', head: 'headlights', brake: 'taillights_cover', hideMat: 'shadow' },
-  },
-  {
-    id: 'falcon-gt', name: 'Falcon Desert GT', brand: 'FALCON', cls: 'Supercar', style: 'super',
-    price: 20000, topSpeed: 330, accel: 2.9, handling: 0.9, braking: 0.92, grip: 0.92, mass: 1480,
-    paints: [0xff5a00, 0x0f5132, 0xffffff, 0x101820, 0x9b111e],
-  },
-  {
-    id: 'arrow-rs', name: 'Arrow RS Superveloce', brand: 'ARROW', cls: 'V12 Supercar', style: 'super',
-    price: 32000, topSpeed: 350, accel: 2.7, handling: 0.92, braking: 0.94, grip: 0.94, mass: 1520,
-    paints: [0x9bd000, 0xffd400, 0x1a1a1a, 0xe10600, 0x6e7b8b],
-  },
-  {
-    id: 'nitro-hyper', name: 'Nitro Hypercar X', brand: 'NITRO', cls: 'Hypercar', style: 'hyper',
-    price: 55000, topSpeed: 400, accel: 2.3, handling: 0.95, braking: 0.97, grip: 0.96, mass: 1380,
-    paints: [0x0047ab, 0xc0c0c0, 0x000000, 0xff2d55, 0xffffff],
   },
 ];
 

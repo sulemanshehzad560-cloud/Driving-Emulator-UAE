@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { buildCar } from '../cars/carFactory.js';
-import { loadCarModel, instantiateModelCar } from '../cars/modelCars.js';
+import { loadBestCarModel, instantiateModelCar } from '../cars/modelCars.js';
 
 function backdropTexture() {
   const c = document.createElement('canvas');
@@ -106,13 +106,15 @@ export class Garage {
       car.userData.brakeMat.emissiveIntensity = 1.2;
       this.turntable.add(car);
     };
-    put(buildCar({ style: spec.style, color, detail: true, quality: 'high' }));
-    if (spec.model) {
-      loadCarModel(spec.model).then((tpl) => {
-        if (!tpl) return;
-        try { put(instantiateModelCar(spec, tpl, color)); } catch (e) { console.warn('[garage]', e.message); }
-      });
-    }
+    const procedural = () => put(buildCar({ style: spec.style, color, detail: true, quality: 'high' }));
+    if (!spec.model) return procedural();
+    // model cars: keep the turntable empty for the moment it takes to load (no crude stand-in)
+    if (this.car) { this.turntable.remove(this.car); this.car = null; }
+    loadBestCarModel(spec.model, this.hd).then((tpl) => {
+      if (this.carKey !== key) return;
+      if (!tpl) return procedural();
+      try { put(instantiateModelCar(spec, tpl, color)); } catch (e) { console.warn('[garage]', e.message); procedural(); }
+    });
   }
 
   resize() {

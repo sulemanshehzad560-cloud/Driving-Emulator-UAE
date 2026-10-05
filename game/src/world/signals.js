@@ -80,6 +80,11 @@ export class TrafficLights {
     this.update(this.time, true);
   }
 
+  /** Solid signal poles of a tile: flat [x, z, r, ...]. */
+  obstaclesFor(tileKey) {
+    return this.byTile.get(tileKey)?.group.userData.obstacles || [];
+  }
+
   removeTile(tile) {
     const rec = this.byTile.get(tile.key);
     if (!rec) return;
@@ -111,6 +116,7 @@ export class TrafficLights {
       m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 2 * 3), 3);
       return m;
     });
+    const obstacles = []; // signal poles are solid: [x, z, r, ...]
     const m4 = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const v = new THREE.Vector3();
@@ -120,6 +126,7 @@ export class TrafficLights {
       const rx = -ap.dz, rz = ap.dx;
       const side = ap.hw + 1.3;
       const px = ap.x + rx * side, pz = ap.z + rz * side;
+      obstacles.push(px, pz, 0.22);
       q.setFromAxisAngle(up, Math.atan2(-ap.dx, -ap.dz));
       m4.compose(v.set(px, 0, pz), q, one);
       poles.setMatrixAt(i, m4);
@@ -150,6 +157,7 @@ export class TrafficLights {
     poles.castShadow = arms.castShadow = heads.castShadow = true;
     group.userData.bulbs = bulbs;
     for (const ap of aps) ap.bulbs = bulbs;
+    group.userData.obstacles = obstacles;
     return group;
   }
 

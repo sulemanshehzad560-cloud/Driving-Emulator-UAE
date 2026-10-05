@@ -50,15 +50,84 @@ function worldBox(obj, root) {
  * material) grouped into corners, plus every small part (rim, disc, caliper)
  * sitting inside each tyre. Returns [FL, FR, RL, RR] proxies in car space.
  */
+/** Split a mesh that holds parts of several wheels into one mesh per corner (by triangle centroid). */
+function splitByCorner(mesh, car, mid) {
+  const g = mesh.geometry;
+  const pos = g.attributes.position;
+  const idx = g.index ? g.index.array : null;
+  const triCount = idx ? idx.length / 3 : pos.count / 3;
+  const m = new THREE.Matrix4().copy(car.matrixWorld).invert().multiply(mesh.matrixWorld);
+  const v = new THREE.Vector3(), c = new THREE.Vector3();
+  const lists = [[], [], [], []];
+  for (let t = 0; t < triCount; t++) {
+    c.set(0, 0, 0);
+    for (let k = 0; k < 3; k++) c.add(v.fromBufferAttribute(pos, idx ? idx[t * 3 + k] : t * 3 + k));
+    c.multiplyScalar(1 / 3).applyMatrix4(m);
+    const q = (c.z < mid.z ? 0 : 2) + (c.x < mid.x ? 0 : 1);
+    for (let k = 0; k < 3; k++) lists[q].push(idx ? idx[t * 3 + k] : t * 3 + k);
+  }
+  const out = [];
+  lists.forEach((list) => {
+    if (!list.length) return;
+    // compact: copy only this corner's vertices so its bounds (and memory) are its own
+    const remap = new Map();
+    const newIdx = list.map((i) => {
+      if (!remap.has(i)) remap.set(i, remap.size);
+      return remap.get(i);
+    });
+    const part = new THREE.BufferGeometry();
+    for (const [name, attr] of Object.entries(g.attributes)) {
+      // getComponent decodes interleaved / quantised (meshopt) layouts to plain values
+      const n = attr.itemSize;
+      const arr = new Float32Array(remap.size * n);
+      for (const [oldI, newI] of remap) for (let k = 0; k < n; k++) arr[newI * n + k] = attr.getComponent(oldI, k);
+      part.setAttribute(name, new THREE.BufferAttribute(arr, n));
+    }
+    part.setIndex(newIdx);
+    const mm = new THREE.Mesh(part, mesh.material);
+    mm.name = mesh.name;
+    mm.position.copy(mesh.position);
+    mm.quaternion.copy(mesh.quaternion);
+    mm.scale.copy(mesh.scale);
+    mesh.parent.add(mm);
+    out.push(mm);
+  });
+  mesh.parent.remove(mesh);
+  mesh.parent?.updateMatrixWorld(true);
+  out.forEach((o) => o.updateMatrixWorld(true));
+  return out;
+}
+
 function autoWheels(scene, car, holder, tireRe) {
-  const tires = [];
+  let tires = [];
   scene.traverse((o) => { if (o.isMesh && o.visible && tireRe.test(o.material?.name || '')) tires.push(o); });
-  if (tires.length < 4) return [null];
-  const all = worldBox(scene, car);
-  const mid = all.getCenter(new THREE.Vector3());
+  if (!tires.length) return [null];
+  if (tires.length < 4) {
+    // tyres merged into one mesh: split every wheel-assembly mesh (tyres, rims, discs, calipers) by corner
+    const box = new THREE.Box3();
+    for (const t of tires) box.union(worldBox(t, car));
+    const mid = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const zone = box.clone().expandByScalar(0.15);
+    const assembly = [];
+    scene.traverse((o) => {
+      if (!o.isMesh || !o.visible) return;
+      const b = worldBox(o, car);
+      const sz = b.getSize(new THREE.Vector3());
+      // spans both axles and both sides but sits inside the tyre envelope -> a merged wheel part
+      if (zone.containsBox(b) && sz.x > size.x * 0.6 && sz.z > size.z * 0.6 && sz.y < size.y * 1.2) assembly.push(o);
+    });
+    for (const o of assembly) splitByCorner(o, car, mid);
+    tires = [];
+    scene.traverse((o) => { if (o.isMesh && o.visible && tireRe.test(o.material?.name || '')) tires.push(o); });
+    if (tires.length < 4) return [null];
+  }
+  // split the tyres around their own centre (stray helper geometry can skew the scene's box)
+  const centres = tires.map((t) => worldBox(t, car).getCenter(new THREE.Vector3()));
+  const mid = centres.reduce((a, c) => a.add(c), new THREE.Vector3()).multiplyScalar(1 / centres.length);
   const corners = [[], [], [], []]; // car space: front = -z, left = -x
-  for (const t of tires) {
-    const c = worldBox(t, car).getCenter(new THREE.Vector3()); // classify in car space
+  for (const [i, t] of tires.entries()) {
+    const c = centres[i]; // classify in car space
     corners[(c.z < mid.z ? 0 : 2) + (c.x < mid.x ? 0 : 1)].push(t);
   }
   if (corners.some((c) => !c.length)) return [null];
@@ -260,4 +329,16 @@ export function modelTrafficCar(template, paintMat, color) {
     }
   });
   return g;
+}
+
+/**
+ * Best available version of a car model: the full-resolution HD file on
+ * High/Ultra (cars/hd/...), else the phone version. Resolves to null if neither loads.
+ */
+export async function loadBestCarModel(model, hd) {
+  if (hd) {
+    const tpl = await loadCarModel({ ...model, url: model.url.replace(/^cars\//, 'cars/hd/') });
+    if (tpl) return tpl;
+  }
+  return loadCarModel(model);
 }

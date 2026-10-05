@@ -437,7 +437,8 @@ export function facadeIndustrial(n = 256, tint = '#b9bec4') {
 export function paintWear(n = 256, seed = 31) {
   const f = fbm(n, { scale: 16, octaves: 4, seed });
   return fieldToCanvas(n, (x, y) => {
-    const v = f[y * n + x] > 0.36 ? 255 : 0;
+    // mostly clean paint, gently scuffed in patches (used as a colour multiplier)
+    const v = Math.round(255 - Math.max(0, 0.42 - f[y * n + x]) * 160);
     return [v, v, v];
   });
 }

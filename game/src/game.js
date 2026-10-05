@@ -13,10 +13,11 @@ import { Props } from './world/props.js';
 import { farTerrain } from './world/overview.js';
 import { buildCar, styleDims } from './cars/carFactory.js';
 import { buildInterior, drawCluster } from './cars/interior.js';
-import { loadCarModel, instantiateModelCar } from './cars/modelCars.js';
+import { loadCarModel, loadBestCarModel, instantiateModelCar } from './cars/modelCars.js';
 import { TRAFFIC_TYPES, carById } from './cars/catalog.js';
 import { Vehicle } from './sim/vehicle.js';
 import { Traffic } from './sim/traffic.js';
+import { Colliders, tileObstacles } from './sim/collision.js';
 import { Input } from './sim/input.js';
 import { Hud } from './hud/hud.js';
 import { icon } from './ui/icons.js';
@@ -75,12 +76,14 @@ export class Game {
     this.camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.15, q.far + 1500);
     progress('Lighting the sky…');
     this.env = new Environment(this.scene, this.renderer, q, this.art);
-    await this.env.preload();
+    await this.env.preload(TIMES[this.settings.time]?.hour ?? 12.5, this.settings.season);
+    this.env.onSkyReady = () => this.applyEnvironment(); // a better-matching sky finished streaming in
 
     this.props = new Props(this.mats.M);
     this.graph = new DynamicGraph();
     this.lights = new TrafficLights(this.scene);
     this.enforcement = new Enforcement(this.scene, this.graph);
+    this.colliders = new Colliders();
     if (this.landmask) this.scene.add((this.terrain = farTerrain(this.landmask.tex, this.landmask.info, this.mats.M.ground.map)));
     this.streamer = new Streamer({
       scene: this.scene,
@@ -93,8 +96,10 @@ export class Game {
         this.graph.addTile(t.key, t.origin, t.data.graph);
         this.lights.addTile(t);
         this.enforcement.addTile(t);
+        this.colliders.addTile(t.key, [...tileObstacles(t.data), ...this.lights.obstaclesFor(t.key), ...this.enforcement.obstaclesFor(t.key)]);
       },
       onRemove: (t) => {
+        this.colliders.removeTile(t.key);
         this.enforcement.removeTile(t);
         this.lights.removeTile(t);
         this.graph.removeTile(t.key);
@@ -107,8 +112,8 @@ export class Game {
     this.spec = carById(this.profile.selected);
     const paint = this.profile.paints[this.spec.id] ?? this.spec.paints[0];
     this.car = null;
-    if (this.spec.model && this.qualityKey !== 'low') {
-      const tpl = await loadCarModel(this.spec.model);
+    if (this.spec.model) {
+      const tpl = await loadBestCarModel(this.spec.model, this.q.hdCars);
       if (tpl) {
         try { this.car = instantiateModelCar(this.spec, tpl, paint); } catch (e) { console.warn('[cars]', e.message); }
       }
@@ -721,19 +726,10 @@ export class Game {
     const x0 = p.x, z0 = p.z;
     p.update(dt, eff);
 
-    for (const k of [1.4, -1.4]) {
-      const cx = p.x + fx * k, cz = p.z + fz * k;
-      const res = this.streamer.collideCircle(cx, cz, 1.05);
-      if (res.hit) {
-        p.x += res.x - cx;
-        p.z += res.z - cz;
-        const impact = p.bounce(res.nx, res.nz, 0.15);
-        if (impact > 4) this.crash(impact);
-      }
-    }
+    this.resolveWorldCollisions(x0, z0, dt);
     const hit = this.traffic.collide(p);
     if (hit) {
-      const impact = p.bounce(hit.nx, hit.nz, 0.3);
+      const impact = p.collide(hit.nx, hit.nz);
       if (impact > 3) {
         this.crash(impact);
         if (impact > 6 && (!this.lastAccident || this.time - this.lastAccident > 8)) {
@@ -924,6 +920,79 @@ export class Game {
     if (this.cockpitOn && this.car.userData.steer) this.car.userData.steer(-p.steer * 5);
   }
 
+  /** Car footprint as two circles along its length (front, back). */
+  carCircles(x, z, heading) {
+    const fx = -Math.sin(heading), fz = -Math.cos(heading);
+    const r = this.player.width / 2 * 0.95;
+    const off = Math.max(0.3, this.player.length / 2 - r);
+    return [[x + fx * off, z + fz * off, r], [x - fx * off, z - fz * off, r]];
+  }
+
+  /** Contact at a pose: returns the push-out correction and wall normal, or null. */
+  contactAt(x, z, heading) {
+    let dx = 0, dz = 0, nx = 0, nz = 0, hit = false;
+    for (const [cx0, cz0, r] of this.carCircles(x, z, heading)) {
+      let cx = cx0 + dx, cz = cz0 + dz;
+      for (const test of [(a, b) => this.streamer.collideCircle(a, b, r), (a, b) => this.colliders.collideCircle(a, b, r)]) {
+        const res = test(cx, cz); // buildings, then round obstacles
+        if (!res.hit) continue;
+        dx += res.x - cx; dz += res.z - cz;
+        cx = res.x; cz = res.z;
+        nx += res.nx; nz += res.nz;
+        hit = true;
+      }
+    }
+    if (!hit) return null;
+    const l = Math.hypot(nx, nz) || 1;
+    return { dx, dz, nx: nx / l, nz: nz / l };
+  }
+
+  /**
+   * Swept collision against buildings and street furniture. The move from
+   * (x0, z0) is checked in <= 0.35 m steps so nothing is skipped at speed;
+   * on contact the car stops at the wall and loses speed into it without
+   * picking up spin.
+   */
+  resolveWorldCollisions(x0, z0, dt) {
+    const p = this.player;
+    const dist = Math.hypot(p.x - x0, p.z - z0);
+    const steps = Math.max(1, Math.min(40, Math.ceil(dist / 0.35)));
+    const x1 = p.x, z1 = p.z;
+    let contact = null;
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const x = x0 + (x1 - x0) * t, z = z0 + (z1 - z0) * t;
+      contact = this.contactAt(x, z, p.heading);
+      if (contact) {
+        p.x = x + contact.dx;
+        p.z = z + contact.dz;
+        break;
+      }
+    }
+    if (contact) {
+      const impact = p.collide(contact.nx, contact.nz);
+      if (impact > 4) this.crash(impact);
+      this.stuckTime = (this.stuckTime || 0) + dt;
+    } else if (p.kmh > 5) this.stuckTime = 0; // still pinned against something: keep counting across free frames
+    // safety net: the car should never end up inside a building or wedged for long
+    const inside = this.streamer.pointInBuilding(p.x, p.z);
+    if (inside || (this.stuckTime > 2.5 && p.kmh < 3 && this.input.state.throttle > 0.5)) this.recoverToRoad(inside ? 'inside' : 'stuck');
+  }
+
+  recoverToRoad(reason) {
+    this.stuckTime = 0;
+    const nr = this.graph.nearest(this.player.x, this.player.z, 120) || this.graph.spawnPoint(this.player.x, this.player.z, 300);
+    if (!nr) return;
+    const l = Math.hypot(nr.dx, nr.dz) || 1;
+    let dx = nr.dx / l, dz = nr.dz / l;
+    const [fx, fz] = this.player.forward;
+    if (dx * fx + dz * fz < 0 && !nr.road.oneway) { dx = -dx; dz = -dz; }
+    const off = nr.road.oneway ? Math.max(0, nr.road.width / 2 - 1.9) : nr.road.width / 4;
+    this.player.place(nr.px - dz * off, nr.pz + dx * off, Math.atan2(-dx, -dz));
+    this.camInit = false;
+    this.hud.toast(reason === 'inside' ? 'Car recovered back to the road' : 'Car freed and moved back to the road', 'info', 2500);
+  }
+
   setCockpit(on) {
     if (this.cockpitOn === on) return;
     this.cockpitOn = on;
@@ -1041,9 +1110,11 @@ export class Game {
     if (fps > 50) pf.fast++;
     else pf.fast = 0;
     const base = this.basePixelRatio || (this.basePixelRatio = this.renderer.getPixelRatio());
+    // never scale below 480 rendered lines: blocky pixels are worse than a few fps
+    const minScale = Math.min(1, Math.max(0.6, 480 / (Math.min(innerWidth, innerHeight) * base)));
     let changed = false;
-    if (pf.slow >= 3 && pf.scale > 0.55) {
-      pf.scale = Math.max(0.55, pf.scale - 0.1);
+    if (pf.slow >= 3 && pf.scale > minScale) {
+      pf.scale = Math.max(minScale, pf.scale - 0.1);
       pf.slow = 0;
       changed = true;
     } else if (pf.fast >= 6 && pf.scale < 1) {

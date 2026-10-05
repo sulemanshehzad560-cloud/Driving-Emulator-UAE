@@ -10,10 +10,10 @@ import { glowTexture } from './textures.js';
 import { physicsCore } from '../sim/physicsCore.js';
 
 export const QUALITY = {
-  low: { name: 'Low', post: false, msaa: 0, ao: false, flare: false, probe: false, shadows: false, propShadows: false, shadowMap: 0, tileRadius: 1100, propRadius: 450, maxBuildingsPerTile: 1200, traffic: 10, far: 1400, bloom: false, mirrorEvery: 3, mirrorScale: 0.5, parkedCars: false },
-  medium: { name: 'Medium', post: true, msaa: 2, ao: false, flare: false, probe: false, shadows: true, propShadows: false, shadowMap: 1024, tileRadius: 1400, propRadius: 650, maxBuildingsPerTile: 2500, traffic: 18, far: 1900, bloom: false, mirrorEvery: 2, mirrorScale: 0.75, parkedCars: true },
-  high: { name: 'High', post: true, msaa: 4, ao: false, flare: true, probe: true, shadows: true, propShadows: true, shadowMap: 2048, tileRadius: 1700, propRadius: 850, maxBuildingsPerTile: 4000, traffic: 26, far: 2400, bloom: true, mirrorEvery: 1, mirrorScale: 1, parkedCars: true },
-  ultra: { name: 'Ultra', post: true, msaa: 4, ao: true, flare: true, probe: true, shadows: true, propShadows: true, shadowMap: 4096, tileRadius: 2100, propRadius: 1100, maxBuildingsPerTile: 6000, traffic: 34, far: 3000, bloom: true, mirrorEvery: 1, mirrorScale: 1.25, parkedCars: true },
+  low: { name: 'Low', tex: '1k', hdri: '1k', hdCars: false, post: false, msaa: 0, ao: false, flare: false, probe: false, shadows: false, propShadows: false, shadowMap: 0, tileRadius: 1100, propRadius: 450, maxBuildingsPerTile: 1200, traffic: 10, far: 1400, bloom: false, mirrorEvery: 3, mirrorScale: 0.5, parkedCars: false },
+  medium: { name: 'Medium', tex: '1k', hdri: '1k', hdCars: false, post: true, msaa: 2, ao: false, flare: false, probe: false, shadows: true, propShadows: false, shadowMap: 1024, tileRadius: 1400, propRadius: 650, maxBuildingsPerTile: 2500, traffic: 18, far: 1900, bloom: false, mirrorEvery: 2, mirrorScale: 0.75, parkedCars: true },
+  high: { name: 'High', tex: '2k', hdri: '2k', hdCars: true, post: true, msaa: 4, ao: false, flare: true, probe: true, shadows: true, propShadows: true, shadowMap: 2048, tileRadius: 1700, propRadius: 850, maxBuildingsPerTile: 4000, traffic: 26, far: 2400, bloom: true, mirrorEvery: 1, mirrorScale: 1, parkedCars: true },
+  ultra: { name: 'Ultra', tex: '4k', hdri: '4k', hdCars: true, post: true, msaa: 4, ao: true, flare: true, probe: true, shadows: true, propShadows: true, shadowMap: 4096, tileRadius: 2100, propRadius: 1100, maxBuildingsPerTile: 6000, traffic: 34, far: 3000, bloom: true, mirrorEvery: 1, mirrorScale: 1.25, parkedCars: true },
 };
 
 export const RESOLUTIONS = {
@@ -60,8 +60,10 @@ export function pixelRatioFor(resolution, quality) {
   const res = RESOLUTIONS[resolution] || RESOLUTIONS.auto;
   const h = Math.min(window.innerHeight, window.innerWidth) || 720;
   if (res.height) return Math.min(res.height / h, 3);
-  const caps = { low: 0.75, medium: 1.25, high: 1.75, ultra: 2.5 };
-  return Math.min(dpr, caps[quality] || 1.25);
+  // Auto: a real vertical resolution per preset, never above the screen's own
+  // pixels and never below 480p (lower looks broken/blocky on a phone)
+  const target = { low: 540, medium: 720, high: 900, ultra: 1080 }[quality] || 720;
+  return Math.min(Math.max(dpr, 480 / h), Math.max(target, 480) / h);
 }
 
 // ---- height fog: haze thins out with altitude so skylines rise above it ----
@@ -105,16 +107,21 @@ function luminance(r, g, b) {
 
 /** Analyse an equirect HDR: sun direction/elevation, average & horizon colour. */
 function analyseHdr(tex) {
-  const { data, width: w, height: h } = tex.image;
+  const { data: raw, width: w, height: h } = tex.image;
+  // half-float skies arrive as Uint16 bit patterns: decode (sampling every 2nd pixel keeps this cheap)
+  const half = raw instanceof Uint16Array;
+  const data = half ? { length: raw.length } : raw;
+  const px = half ? (i) => THREE.DataUtils.fromHalfFloat(raw[i]) : (i) => raw[i];
   const stride = data.length / (w * h);
   let best = -1, bx = 0, by = 0;
   let avg = 0, n = 0;
   const hor = [0, 0, 0];
   let hn = 0;
-  for (let y = 0; y < h; y += 2) {
-    for (let x = 0; x < w; x += 2) {
+  const st = Math.max(2, Math.floor(w / 512)); // same work for 1K, 2K and 4K skies
+  for (let y = 0; y < h; y += st) {
+    for (let x = 0; x < w; x += st) {
       const i = (y * w + x) * stride;
-      const L = luminance(data[i], data[i + 1], data[i + 2]);
+      const L = luminance(px(i), px(i + 1), px(i + 2));
       const v = 1 - (y + 0.5) / h;
       if (v > 0.5) {
         avg += Math.min(L, 50);
@@ -122,7 +129,7 @@ function analyseHdr(tex) {
         if (L > best) { best = L; bx = x; by = y; }
       }
       if (v > 0.5 && v < 0.56) {
-        hor[0] += data[i]; hor[1] += data[i + 1]; hor[2] += data[i + 2];
+        hor[0] += px(i); hor[1] += px(i + 1); hor[2] += px(i + 2);
         hn++;
       }
     }
@@ -145,7 +152,8 @@ export class Environment {
     this.quality = quality;
     this.art = art;
     this.hdr = new Map();
-    this.loader = new HDRLoader().setDataType(THREE.FloatType);
+    this.loading = new Map();
+    this.loader = new HDRLoader().setDataType(THREE.HalfFloatType); // half the GPU memory of float, plenty for skies
     this.sky = new Sky();
     this.sky.scale.setScalar(20000);
     scene.add(this.sky);
@@ -187,25 +195,66 @@ export class Environment {
 
   async loadHdr(slot) {
     if (this.hdr.has(slot)) return this.hdr.get(slot);
+    if (this.loading.has(slot)) return this.loading.get(slot);
     const entry = this.art?.manifest?.hdri?.[slot];
     if (!entry || this.quality.name === 'Low') return null;
-    try {
-      const tex = await this.loader.loadAsync(`${this.art.base}/${entry.file}`);
-      tex.mapping = THREE.EquirectangularReflectionMapping;
-      const info = analyseHdr(tex);
-      const env = this.pmrem.fromEquirectangular(tex).texture;
-      const rec = { tex, env, info };
-      this.hdr.set(slot, rec);
-      return rec;
-    } catch (e) {
-      console.warn('[env] HDR failed', slot, e.message);
-      this.hdr.set(slot, null);
-      return null;
+    const job = (async () => {
+      try {
+        // sky resolution follows the preset: 1K phones, 2K High, 4K Ultra
+        const t = entry.tiers || {};
+        const file = t[this.quality.hdri] || (this.quality.hdri === '4k' && t['2k']) || entry.file;
+        const tex = await this.loader.loadAsync(`${this.art.base}/${file}`);
+        tex.mapping = THREE.EquirectangularReflectionMapping;
+        const info = analyseHdr(tex);
+        const env = this.pmrem.fromEquirectangular(tex).texture;
+        const rec = { tex, env, info, used: performance.now() };
+        this.hdr.set(slot, rec);
+        this.evictSkies(slot);
+        return rec;
+      } catch (e) {
+        console.warn('[env] HDR failed', slot, e.message);
+        this.hdr.set(slot, null);
+        return null;
+      } finally {
+        this.loading.delete(slot);
+      }
+    })();
+    this.loading.set(slot, job);
+    return job;
+  }
+
+  /** Keep GPU memory bounded: few skies resident at once (2K/4K skies are large). */
+  evictSkies(keep) {
+    const max = this.quality.hdri === '1k' ? 6 : 3;
+    const pinned = new Set([keep, this.currentSlot]);
+    const spare = [...this.hdr.entries()].filter(([k, r]) => r && !pinned.has(k)).sort((a, b) => a[1].used - b[1].used);
+    let resident = [...this.hdr.values()].filter(Boolean).length;
+    for (const [k, r] of spare) {
+      if (resident <= max) break;
+      r.tex.dispose();
+      r.env.dispose();
+      this.hdr.delete(k);
+      resident--;
     }
   }
 
-  async preload() {
-    await Promise.all(['day', 'clear', 'sunset', 'night', 'overcast'].map((s) => this.loadHdr(s)));
+  /** Which sky photo suits this hour and weather. */
+  slotFor(hour, seasonKey) {
+    const season = SEASONS[seasonKey] || SEASONS.summer;
+    if (season.wet || seasonKey === 'sandstorm' || seasonKey === 'fog') return hour >= 19 || hour < 5.6 ? 'night' : 'overcast';
+    if (hour >= 19.3 || hour < 5.2) return seasonKey === 'winter' ? 'clearnight' : 'night';
+    if (hour < 6.6) return 'dawn';
+    if (hour < 8.2) return 'sunset'; // low morning sun
+    if (hour >= 18.3) return 'dusk';
+    if (hour >= 16.8) return 'sunset';
+    if (hour >= 15.2) return 'golden';
+    return season.hdri;
+  }
+
+  /** Load the sky needed at start so the first frame is right. */
+  async preload(hour = 12.5, seasonKey = 'summer') {
+    await this.loadHdr(this.slotFor(hour, seasonKey));
+    if (!this.hdr.get(this.slotFor(hour, seasonKey))) await this.loadHdr(SEASONS[seasonKey]?.hdri || 'clear');
   }
 
   /** hour: 0..24, season key */
@@ -221,10 +270,15 @@ export class Environment {
     const low = THREE.MathUtils.clamp(1 - elevation / 25, 0, 1) * (1 - night);
     this.night = night;
 
-    let slot = season.hdri;
-    if (night > 0.6) slot = 'night';
-    else if (low > 0.45 && !season.wet && seasonKey !== 'sandstorm' && seasonKey !== 'fog') slot = 'sunset';
+    // wanted sky; while it streams in, use the closest one already loaded
+    const want = this.slotFor(hour, seasonKey);
+    const fallbacks = { dawn: ['sunset'], golden: ['clear', 'day'], dusk: ['sunset', 'night'], clearnight: ['night'], sunset: ['golden', 'dawn'] }[want] || [];
+    let slot = [want, ...fallbacks, season.hdri, night > 0.6 ? 'night' : 'clear', 'day'].find((k) => this.hdr.get(k)) || want;
+    if (!this.hdr.has(want) && this.art?.manifest?.hdri?.[want]) {
+      this.loadHdr(want).then((rec) => { if (rec && this.onSkyReady) this.onSkyReady(); });
+    }
     const hdr = this.hdr.get(slot);
+    if (hdr) { hdr.used = performance.now(); this.currentSlot = slot; }
 
     const theta = THREE.MathUtils.degToRad(180 - azimuth);
     if (hdr && night < 0.6 && slot !== 'overcast') elevation = THREE.MathUtils.radToDeg(hdr.info.sunEl);

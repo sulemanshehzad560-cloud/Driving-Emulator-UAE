@@ -48,6 +48,10 @@ android {
         buildConfig true
     }
 
+    // Google Play caps the base download at 200 MB: the UAE world, 2K/4K art and HD cars
+    // ship in an install-time asset pack (downloaded with the app, readable through AssetManager)
+    assetPacks = [':gamedata']
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17

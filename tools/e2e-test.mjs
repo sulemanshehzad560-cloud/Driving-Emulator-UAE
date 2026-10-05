@@ -126,7 +126,30 @@ let s = await state();
 check('accelerates', s.kmh > 20, `${s.kmh.toFixed(0)} km/h`);
 const moved = Math.hypot(s.x - start.x, s.z - start.z);
 check('car moves', moved > 10, `${moved.toFixed(0)} m`);
-const h0 = s.heading;
+// regression: with no input the car must hold its heading (it used to spin after knocks)
+const hs = await page.evaluate(() => { const g = window.__game; const h = g.player.heading; for (let i = 0; i < 60; i++) g.update(1 / 30); return Math.abs(Math.atan2(Math.sin(g.player.heading - h), Math.cos(g.player.heading - h))) * 180 / Math.PI; });
+check('no self-steering with zero input', hs < 0.5, `Δheading ${hs.toFixed(2)}°`);
+// regression: trees and poles are solid
+const solid = await page.evaluate(() => {
+  const g = window.__game, p = g.player;
+  let best = null;
+  for (const list of g.colliders.byTile.values()) for (const c of list) {
+    const d = Math.hypot(c.x - p.x, c.z - p.z);
+    if (c.r < 0.5 && d > 30 && d < 400 && (!best || d < best.d)) best = { c, d };
+  }
+  if (!best) return { skip: true };
+  const c = best.c, h = Math.atan2(-(c.x - p.x), -(c.z - p.z));
+  const save = [p.x, p.z, p.heading];
+  p.place(c.x + Math.sin(h) * 22, c.z + Math.cos(h) * 22, h);
+  let minD = 1e9;
+  g.input.keys.add('w');
+  for (let i = 0; i < 120; i++) { g.update(1 / 30); minD = Math.min(minD, Math.hypot(c.x - p.x, c.z - p.z)); }
+  g.input.keys.delete('w');
+  p.place(...save);
+  return { minD, half: p.length / 2 };
+});
+check('trees and poles are solid', solid.skip || solid.minD > solid.half - 0.3, solid.skip ? 'no obstacle nearby' : `closest ${solid.minD.toFixed(2)} m, half length ${solid.half.toFixed(2)} m`);
+const h0 = (await state()).heading;
 await sim(20, ['w', 'a']);
 s = await state();
 const dh = Math.atan2(Math.sin(s.heading - h0), Math.cos(s.heading - h0));

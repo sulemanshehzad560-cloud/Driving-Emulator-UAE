@@ -34,7 +34,10 @@ export class Vehicle {
   /** Configure the Rust dynamics model from the car's catalogue stats. */
   initCore() {
     const s = this.spec;
-    const { view } = this.core.alloc(this.core.blockSize);
+    // one block for the player's car, reused by every drive (the WASM arena is fixed-size)
+    if (!this.core.playerBlock) this.core.playerBlock = this.core.alloc(this.core.blockSize);
+    const { view } = this.core.playerBlock;
+    view.fill(0);
     this.block = view;
     this.blockPtr = view.byteOffset;
     const m = s.mass || 1800;
@@ -64,10 +67,13 @@ export class Vehicle {
   updateCore(dt, input) {
     const b = this.block;
     const h0 = this.heading;
-    // JS may have moved the car (collisions): push the current state in
-    b[OFF.S_X] = this.x;
-    b[OFF.S_Z] = this.z;
+    // JS may have moved the car (collisions): push the current state in.
+    // Positions are integrated locally (0,0) and added back in double precision:
+    // float32 at ~50 km from the map origin only resolves ~4 mm, which jitters.
+    b[OFF.S_X] = 0;
+    b[OFF.S_Z] = 0;
     b[OFF.S_HEADING] = h0;
+    b[OFF.S_R] = this.yawRate;
     b[OFF.S_U] = -this.vx * Math.sin(h0) - this.vz * Math.cos(h0); // forward component
     b[OFF.S_V] = -this.vx * Math.cos(h0) + this.vz * Math.sin(h0); // left component
     b[OFF.I_THROTTLE] = input.throttle;
@@ -76,8 +82,8 @@ export class Vehicle {
     b[OFF.I_HANDBRAKE] = input.handbrake ? 1 : 0;
     b[OFF.I_OFFROAD] = this.offroad ? 1 : 0;
     this.core.ex.vehicle_step(this.blockPtr, dt);
-    this.x = b[OFF.S_X];
-    this.z = b[OFF.S_Z];
+    this.x += b[OFF.S_X];
+    this.z += b[OFF.S_Z];
     this.heading = b[OFF.S_HEADING];
     const u = b[OFF.S_U], v = b[OFF.S_V];
     const h = this.heading;
@@ -95,6 +101,8 @@ export class Vehicle {
     this.z = z;
     this.heading = heading;
     this.vx = this.vz = this.speed = 0;
+    this.yawRate = 0;
+    this.steer = 0;
   }
 
   get forward() {
@@ -191,6 +199,34 @@ export class Vehicle {
     const targetRpm = 900 + inGear * 6200 + (input.throttle ? 400 : 0);
     this.rpm += (targetRpm - this.rpm) * Math.min(1, dt * 8);
     this.wheelSpin += (fwd * dt) / 0.36;
+  }
+
+  /**
+   * Hit a wall/obstacle with outward normal (nx, nz): lose the speed going
+   * into it (a little bounce), scrub some speed along it, and damp yaw and
+   * sideways slip so the tyre model does not turn the knock into a spin.
+   * Returns the impact speed (m/s).
+   */
+  collide(nx, nz) {
+    const vn = this.vx * nx + this.vz * nz;
+    if (vn >= 0) return 0;
+    this.vx -= 1.15 * vn * nx;
+    this.vz -= 1.15 * vn * nz;
+    const tx = -nz, tz = nx;
+    const vt = this.vx * tx + this.vz * tz;
+    this.vx -= vt * tx * 0.25;
+    this.vz -= vt * tz * 0.25;
+    const [fx, fz] = this.forward;
+    const rx = -fz, rz = fx;
+    const u = this.vx * fx + this.vz * fz;
+    let v = this.vx * rx + this.vz * rz;
+    const vmax = 0.5 + Math.abs(u) * 0.15;
+    v = Math.max(-vmax, Math.min(vmax, v));
+    this.vx = fx * u + rx * v;
+    this.vz = fz * u + rz * v;
+    this.speed = u;
+    this.yawRate *= 0.2;
+    return -vn;
   }
 
   /** Called after collision resolution moved the car. */

@@ -22,8 +22,8 @@ const DEFAULT_PROFILE = {
   provider: 'guest',
   avatar: '',
   balance: 2500,
-  owned: ['kaiser-s'],
-  selected: 'kaiser-s',
+  owned: ['nova-gt'],
+  selected: 'nova-gt',
   paints: {},
   blackPoints: 0,
   stats: { km: 0, fines: 0, finesCount: 0, missions: 0, tests: 0, topSpeed: 0, playSeconds: 0 },
@@ -46,6 +46,14 @@ export function loadProfile() {
   profile = { ...structuredClone(DEFAULT_PROFILE), ...(saved || {}) };
   profile.settings = { ...DEFAULT_SETTINGS, ...(saved && saved.settings) };
   profile.stats = { ...DEFAULT_PROFILE.stats, ...(saved && saved.stats) };
+  // v2 garage: the free starter is the Nova GT; cars retired from the showroom are refunded
+  const RETIRED = { 'kaiser-s': 0, 'kaiser-c': 3500, 'kaiser-g': 6000, 'kaiser-gle': 5000, 'kaiser-gt': 12000, 'falcon-gt': 20000, 'arrow-rs': 32000, 'nitro-hyper': 55000 };
+  const before = JSON.stringify([profile.owned, profile.selected]);
+  for (const id of profile.owned) if (id in RETIRED) profile.balance += RETIRED[id];
+  profile.owned = profile.owned.filter((id) => !(id in RETIRED));
+  if (!profile.owned.includes('nova-gt')) profile.owned.unshift('nova-gt');
+  if (!profile.owned.includes(profile.selected)) profile.selected = 'nova-gt';
+  if (JSON.stringify([profile.owned, profile.selected]) !== before) saveProfile(); // migrate (and refund) once
   return profile;
 }
 

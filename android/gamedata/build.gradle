@@ -1,0 +1,14 @@
+// Install-time asset pack: delivered together with the app by Google Play and
+// merged into the app's assets, so the WebView reads www/world, www/art and
+// www/cars exactly as if they were in the base APK. CI moves those folders here
+// after building the game (see .github/workflows/build-apk.yml).
+plugins {
+    id 'com.android.asset-pack'
+}
+
+assetPack {
+    packName = 'gamedata'
+    dynamicDelivery {
+        deliveryType = 'install-time'
+    }
+}

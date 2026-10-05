@@ -109,11 +109,25 @@ jobs:
           KEYALIAS: ${{ secrets.KEY_ALIAS }}
           KEYPASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          set -e
+          # the large assets go into the install-time asset pack (Play caps the base module at 200 MB)
+          mkdir -p gamedata/src/main/assets/www
+          for d in world art cars; do
+            if [ -d app/src/main/assets/www/$d ]; then mv app/src/main/assets/www/$d gamedata/src/main/assets/www/; fi
+          done
+          du -sh app/src/main/assets/www gamedata/src/main/assets/www
           chmod +x gradlew
-          ./gradlew --no-daemon assembleRelease bundleRelease -PversionCode=${{ github.run_number }} -PversionName=2.0.${{ github.run_number }}
+          ./gradlew --no-daemon bundleRelease -PversionCode=${{ github.run_number }} -PversionName=2.0.${{ github.run_number }}
+          AAB=app/build/outputs/bundle/release/app-release.aab
+          # one universal APK (base + asset pack) for direct installs, signed like the bundle
+          curl -fsSL --retry 4 -o /tmp/bundletool.jar https://github.com/google/bundletool/releases/download/1.17.2/bundletool-all-1.17.2.jar
+          if [ -n "$KEYSTOREFILE" ]; then KS="$KEYSTOREFILE"; KSP="$KEYSTOREPASSWORD"; KA="$KEYALIAS"; KP="$KEYPASSWORD";
+          else KS="$HOME/.android/debug.keystore"; KSP=android; KA=androiddebugkey; KP=android; fi
+          java -jar /tmp/bundletool.jar build-apks --bundle="$AAB" --output=/tmp/app.apks --mode=universal \
+            --ks="$KS" --ks-pass="pass:$KSP" --ks-key-alias="$KA" --key-pass="pass:$KP"
           mkdir -p ../dist
-          cp app/build/outputs/apk/release/app-release.apk ../dist/UAE-Drive-v2.0.${{ github.run_number }}.apk
-          cp app/build/outputs/bundle/release/app-release.aab ../dist/UAE-Drive-v2.0.${{ github.run_number }}.aab
+          unzip -p /tmp/app.apks universal.apk > ../dist/UAE-Drive-v2.0.${{ github.run_number }}.apk
+          cp "$AAB" ../dist/UAE-Drive-v2.0.${{ github.run_number }}.aab
           ls -la ../dist
 
       - uses: actions/upload-artifact@v4
@@ -142,12 +156,15 @@ jobs:
 
             The `.aab` is the Google Play upload bundle (sign it with your upload key).
 
+            The full game (UAE world, 2K/4K skies and materials, HD car models) is inside: the APK is a
+            single universal install; the `.aab` carries the big assets in an install-time asset pack.
+
             Map data © OpenStreetMap contributors (ODbL). Skies and textures: Poly Haven / ambientCG (CC0).
 
   emulator-test:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     continue-on-error: true
     steps:
       - uses: actions/download-artifact@v4
@@ -168,6 +185,7 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_5
+          disk-size: 8000M
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           script: |

@@ -249,6 +249,7 @@ let driveMode = 'free';
 
 function ensureGarage() {
   if (!garage) garage = window.__garage = new Garage(renderer);
+  garage.hd = QUALITY[qualityKey()].hdCars; // full-resolution car models in the showroom on High/Ultra
   const spec = carById(garage.previewId || profile.selected);
   garage.show(spec, profile.paints[spec.id] ?? spec.paints[0]);
 }
@@ -396,7 +397,7 @@ function renderTab(t) {
         <p>Map data © <b>OpenStreetMap</b> contributors, ODbL 1.0.</p>
         <p>Skies and surface textures: <b>Poly Haven</b> and <b>ambientCG</b> (CC0).</p>
         <p>Aurora Vision GT model: “Car Concept” by Eric Chadwick / Darmstadt Graphics Group, CC BY 4.0 — logos removed, materials adapted for mobile.</p>
-        <p>Vortex S, Nova GT, Zenith X and Atlas R: free concept-car models by <b>Unity Fan</b> (Sketchfab), optimised for phones.</p>
+        <p>Nova GT, Meridian GT-S, Corsa 40, Atlas R, Orion RS, Vortex S and Zenith X: concept-car models by <b>Unity Fan</b> (Sketchfab; Concept Car 037 under CC BY 4.0, the others under Sketchfab's free licence), optimised for phones.</p>
         <p>Traffic cars: “Cars Bundle” by <b>Quaternius</b> (CC0).</p>
         <p>All other vehicles are original designs, not affiliated with any manufacturer.</p>
       </div>

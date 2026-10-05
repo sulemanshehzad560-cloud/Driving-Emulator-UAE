@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Downloads the licensed hero-car models and packs them for phones:
-# textures resized to 1024 px WebP, geometry meshopt-compressed.
+# Downloads the licensed hero-car models and packs each one twice:
+#   <out>/<car>.glb     phones (Low/Medium): textures 1024 px WebP, meshopt geometry
+#   <out>/hd/<car>.glb  High/Ultra: original full-resolution textures, meshopt geometry
 # These licences allow use inside the game but not re-hosting the raw files,
 # so CI fetches them from their public sources on every build.
 # Usage: tools/fetch_cars.sh <out-dir>   (needs curl, python3, node/npx)
@@ -10,12 +11,18 @@ WORK="$(mktemp -d)"
 mkdir -p "$OUT"
 GT="npx --yes @gltf-transform/cli@4"
 
+mkdir -p "$OUT/hd"
 pack() { # in out
   $GT resize "$1" "$WORK/a.glb" --width 1024 --height 1024 >/dev/null
   $GT webp "$WORK/a.glb" "$WORK/b.glb" >/dev/null
   $GT dedup "$WORK/b.glb" "$WORK/c.glb" >/dev/null
   $GT meshopt "$WORK/c.glb" "$2" >/dev/null
   echo "$(basename "$2"): $(du -h "$2" | cut -f1)"
+  # HD: keep every texture at its original resolution
+  local hd="$(dirname "$2")/hd/$(basename "$2")"
+  $GT dedup "$1" "$WORK/h.glb" >/dev/null
+  $GT meshopt "$WORK/h.glb" "$hd" >/dev/null
+  echo "hd/$(basename "$2"): $(du -h "$hd" | cut -f1)"
 }
 
 # Khronos "Car Concept" — CC BY 4.0 (Eric Chadwick / Darmstadt Graphics Group)
@@ -25,11 +32,11 @@ pack "$WORK/concept.glb" "$OUT/concept.glb"
 
 # Unity Fan concept cars (Sketchfab, published as free/public-domain; licence file: Sketchfab Standard)
 MIRROR="https://raw.githubusercontent.com/darkyboys/Drunk-Driving-Simulator/HEAD/assets/models/otherCC0/models/cars"
-fetch_gltf() { # folder name -> local dir with scene.gltf + resources
-  local d="$1" dst="$WORK/$1"
+fetch_gltf() { # folder name [base url] -> local dir with scene.gltf + resources
+  local d="$1" base="${2:-$MIRROR/$1}" dst="$WORK/$1"
   mkdir -p "$dst"
-  curl -fsSL --retry 4 -o "$dst/scene.gltf" "$MIRROR/$d/scene.gltf"
-  python3 - "$dst" "$MIRROR/$d" <<'PY'
+  curl -fsSL --retry 4 -o "$dst/scene.gltf" "$base/scene.gltf"
+  python3 - "$dst" "$base" <<'PY'
 import json, os, subprocess, sys, urllib.parse
 dst, base = sys.argv[1], sys.argv[2]
 g = json.load(open(f'{dst}/scene.gltf'))
@@ -46,4 +53,13 @@ for pair in "vortex:free_concept_car_025__-_public_domain_cc0" "nova:free_ai_bas
   if fetch_gltf "$folder"; then pack "$WORK/$folder/scene.gltf" "$OUT/$name.glb" || echo "::warning::$name not packed"
   else echo "::warning::$name not downloaded — the game falls back to the procedural car"; fi
 done
+# more Unity Fan cars from other public mirrors (Concept Car 037: CC BY 4.0; 038 / 040: Sketchfab free licence)
+for spec in "meridian|c037|https://raw.githubusercontent.com/captain-woof/threejs-tutorial-2022/HEAD/public/models/car" \
+            "orion|c038|https://raw.githubusercontent.com/PassiDel/cgvr-track/HEAD/web-view/js/img/car" \
+            "corsa|c040|https://raw.githubusercontent.com/Nitesh-K1/Car-Render/HEAD/public/models/car"; do
+  IFS='|' read -r name folder base <<<"$spec"
+  if fetch_gltf "$folder" "$base"; then pack "$WORK/$folder/scene.gltf" "$OUT/$name.glb" || echo "::warning::$name not packed"
+  else echo "::warning::$name not downloaded — the game falls back to the procedural car"; fi
+done
+du -sh "$OUT" "$OUT/hd"
 rm -rf "$WORK"
