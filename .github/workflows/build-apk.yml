@@ -116,15 +116,19 @@ jobs:
             if [ -d app/src/main/assets/www/$d ]; then mv app/src/main/assets/www/$d gamedata/src/main/assets/www/; fi
           done
           du -sh app/src/main/assets/www gamedata/src/main/assets/www
+          # no release keystore secret: sign bundle + APK with a generated key (add KEYSTORE_BASE64 for Play uploads)
+          if [ -z "$KEYSTOREFILE" ]; then
+            export KEYSTOREFILE="$RUNNER_TEMP/ci.keystore" KEYSTOREPASSWORD=uaedrive KEYALIAS=uaedrive KEYPASSWORD=uaedrive
+            keytool -genkeypair -noprompt -keystore "$KEYSTOREFILE" -storepass "$KEYSTOREPASSWORD" -keypass "$KEYPASSWORD" \
+              -alias "$KEYALIAS" -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=UAE Drive, O=UAE Drive, C=AE"
+          fi
           chmod +x gradlew
           ./gradlew --no-daemon bundleRelease -PversionCode=${{ github.run_number }} -PversionName=2.0.${{ github.run_number }}
           AAB=app/build/outputs/bundle/release/app-release.aab
           # one universal APK (base + asset pack) for direct installs, signed like the bundle
           curl -fsSL --retry 4 -o /tmp/bundletool.jar https://github.com/google/bundletool/releases/download/1.17.2/bundletool-all-1.17.2.jar
-          if [ -n "$KEYSTOREFILE" ]; then KS="$KEYSTOREFILE"; KSP="$KEYSTOREPASSWORD"; KA="$KEYALIAS"; KP="$KEYPASSWORD";
-          else KS="$HOME/.android/debug.keystore"; KSP=android; KA=androiddebugkey; KP=android; fi
           java -jar /tmp/bundletool.jar build-apks --bundle="$AAB" --output=/tmp/app.apks --mode=universal \
-            --ks="$KS" --ks-pass="pass:$KSP" --ks-key-alias="$KA" --key-pass="pass:$KP"
+            --ks="$KEYSTOREFILE" --ks-pass="pass:$KEYSTOREPASSWORD" --ks-key-alias="$KEYALIAS" --key-pass="pass:$KEYPASSWORD"
           mkdir -p ../dist
           unzip -p /tmp/app.apks universal.apk > ../dist/UAE-Drive-v2.0.${{ github.run_number }}.apk
           cp "$AAB" ../dist/UAE-Drive-v2.0.${{ github.run_number }}.aab
