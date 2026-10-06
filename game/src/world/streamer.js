@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { TILE, tileAt } from './projection.js';
 import { buildTile, roadWidth } from './tileBuild.js';
 import { buildTrafficCar } from '../cars/carFactory.js';
+import { bakeStatic, bakeVehicle, bakedMaterial } from '../render/batch.js';
 
 const MESH_MATS = {
   ground: 'ground', sea: 'sea', water: 'water', road: 'road', junction: 'junction', shoulder: 'shoulder', sidewalk: 'sidewalk',
@@ -14,9 +15,12 @@ const MESH_MATS = {
 };
 const RECEIVE = new Set(['ground', 'road', 'junction', 'sidewalk', 'shoulder', 'park', 'golf', 'pitch', 'farm', 'beach', 'parking', 'sandArea', 'roof', 'kerb', 'kerbStriped', 'markW', 'markY']);
 const CAST = new Set(['barrier', 'roof']);
+// fine detail only drawn on nearby tiles (sub-pixel at a distance, and each is a draw call)
+const DETAIL = new Set(['markW', 'markY', 'kerb', 'kerbStriped', 'sidewalk', 'shoulder', 'barrier', 'guardrail']);
+const DETAIL_RANGE = 650;
 
 export class Streamer {
-  constructor({ scene, materials, props, quality, index, base = 'world', onAdd, onRemove }) {
+  constructor({ scene, materials, props, quality, index, base = 'world', onAdd, onRemove, onChunk }) {
     this.scene = scene;
     this.mats = materials;
     this.props = props;
@@ -25,6 +29,7 @@ export class Streamer {
     this.index = index; // Set of "tx_ty" that exist
     this.onAdd = onAdd;
     this.onRemove = onRemove;
+    this.onChunk = onChunk;
     this.tiles = new Map(); // key -> tile
     this.pending = new Map(); // key -> promise
     this.root = new THREE.Group();
@@ -133,6 +138,11 @@ export class Streamer {
       const d = this.distToTile(X, Z, t.t[0], t.t[1]);
       if (d > this.unloadRadius) this.remove(key);
       else if (t.props) t.props.visible = d < this.propRadius + 150;
+      const on = d < DETAIL_RANGE;
+      if (on !== t.detailOn) {
+        t.detailOn = on;
+        for (const m of t.detail) m.visible = on;
+      }
       if (!t.props && d < this.propRadius) this.addProps(t);
     }
     this.updateChunks(X, Z);
@@ -151,6 +161,7 @@ export class Streamer {
       onProgress && onProgress(++done, list.length);
     }).catch(() => onProgress && onProgress(++done, list.length))));
     for (const t of this.tiles.values()) if (!t.props && this.distToTile(X, Z, t.t[0], t.t[1]) < this.propRadius) this.addProps(t);
+    this.updateChunks(X, Z, Infinity); // everything in view is ready before the drive starts
   }
 
   add(data) {
@@ -161,6 +172,7 @@ export class Streamer {
     group.matrixAutoUpdate = false;
     group.updateMatrix();
     const shadows = this.q.shadows;
+    const detail = [];
     for (const [key, buf] of Object.entries(data.meshes)) {
       let mat;
       if (key.startsWith('wall:')) mat = this.wallMaterial(key.slice(5));
@@ -172,6 +184,7 @@ export class Streamer {
       g.setAttribute('uv', new THREE.BufferAttribute(buf.uv, 2));
       if (buf.c) g.setAttribute('color', new THREE.BufferAttribute(buf.c, 3));
       if (buf.r) g.setAttribute('aRoad', new THREE.BufferAttribute(buf.r, 2));
+      if (buf.s) g.setAttribute('aSide', new THREE.BufferAttribute(buf.s, 3));
       g.setIndex(new THREE.BufferAttribute(buf.i, 1));
       g.computeBoundingSphere();
       const mesh = new THREE.Mesh(g, mat);
@@ -180,6 +193,7 @@ export class Streamer {
       mesh.receiveShadow = shadows && (RECEIVE.has(key) || key.startsWith('wall:'));
       mesh.castShadow = shadows && (CAST.has(key) || key.startsWith('wall:'));
       if (key === 'ground') mesh.renderOrder = -2;
+      if (DETAIL.has(key)) detail.push(mesh);
       group.add(mesh);
     }
     this.root.add(group);
@@ -191,6 +205,8 @@ export class Streamer {
       group,
       data,
       props: null,
+      detail,
+      detailOn: true,
       collision: this.collisionIndex(data),
     };
     this.tiles.set(data.key, tile);
@@ -225,9 +241,13 @@ export class Streamer {
     tile.props = g;
   }
 
-  updateChunks(X, Z) {
+  /**
+   * Pick each prop cell's level of detail and build missing cells nearest
+   * first, within a small time budget per frame so streaming never hitches.
+   */
+  updateChunks(X, Z, budgetMs = 3) {
     const nearR = this.q.nearRadius || 260;
-    let builds = 0;
+    const todo = [];
     for (const t of this.tiles.values()) {
       if (!t.chunks || !t.props.visible) continue;
       for (const c of t.chunks) {
@@ -235,27 +255,40 @@ export class Streamer {
         const dz = Z < c.z0 ? c.z0 - Z : Z > c.z1 ? Z - c.z1 : 0;
         const d = Math.hypot(dx, dz);
         const tier = d < nearR ? 'near' : d < this.propRadius ? 'far' : null;
-        // build at most a couple of cells a frame so streaming never hitches
-        if (tier && !c[tier] && builds < 2) {
-          c[tier] = this.buildChunk(t, c, tier);
-          builds++;
-        }
-        if (c.near) c.near.visible = tier === 'near';
-        if (c.far) c.far.visible = tier === 'far' || (tier === 'near' && !c.near);
+        c.tier = tier;
+        if (tier && !c[tier]) todo.push([d, t, c, tier]);
+        this.showChunk(c);
       }
     }
+    if (!todo.length) return;
+    todo.sort((a, b) => a[0] - b[0]);
+    const t0 = performance.now();
+    for (const [, t, c, tier] of todo) {
+      c[tier] = this.buildChunk(t, c, tier);
+      this.showChunk(c);
+      if (performance.now() - t0 > budgetMs) break;
+    }
+  }
+
+  showChunk(c) {
+    if (c.near) c.near.visible = c.tier === 'near';
+    if (c.far) c.far.visible = c.tier === 'far' || (c.tier === 'near' && !c.near);
   }
 
   buildChunk(tile, c, tier) {
     const near = tier === 'near';
-    const g = this.props.tileGroup(c.inst, { shadows: near && this.q.shadows && this.q.propShadows, lod: tier });
-    if (near) {
-      g.add(this.props.stopSigns(c.stops));
-      if (c.inst.parked && this.q.parkedCars !== false) g.add(parkedCars(c.inst.parked, this.q));
-    }
+    const shadows = near && this.q.shadows && this.q.propShadows;
+    // build the props as instanced meshes, then bake them into a few merged meshes
+    const src = this.props.tileGroup(c.inst, { shadows, lod: tier });
+    if (near) src.add(this.props.stopSigns(c.stops));
+    if (!this.plainMat) this.plainMat = bakedMaterial();
+    const g = bakeStatic(src, { castShadow: shadows, plainMaterial: this.plainMat });
+    src.traverse((o) => o.isInstancedMesh && o.dispose());
+    if (near && c.inst.parked && this.q.parkedCars !== false) g.add(parkedCars(c.inst.parked, this.q));
     g.matrixAutoUpdate = false;
     tile.props.add(g);
     g.updateMatrixWorld(true);
+    this.onChunk && this.onChunk(tier);
     return g;
   }
 
@@ -432,42 +465,51 @@ function splitInstances(inst, stops) {
   return cells;
 }
 
-const PARKED_STYLES = ['sedan', 'suv', 'sedan', 'coupe', 'boxy', 'van', 'suv', 'sedan'];
+const PARKED_STYLES = ['sedan', 'suv', 'sedan', 'coupe', 'suv', 'van', 'sedan', 'suv'];
 const PARKED_COLORS = [0xffffff, 0xc0c0c0, 0x1c1c1c, 0x8c8c8c, 0x1b2a41, 0x7a0e0e, 0xf1e3c2, 0xe6e6e6, 0x2f4f4f, 0x6b5b45];
 
-function parkedCars(arr, q) {
+const parkedGeo = new Map();
+let parkedMat = null;
+
+/**
+ * Parked cars of one cell: one instanced, batched mesh per car style (paint
+ * per instance), capped so a big car park cannot flood the frame.
+ */
+function parkedCars(arr, q, cap = 36) {
   const group = new THREE.Group();
+  const total = arr.length / 4;
+  const stride = Math.max(1, Math.ceil(total / cap));
   const byStyle = new Map();
-  for (let i = 0; i < arr.length; i += 4) {
+  for (let k = 0; k < total; k += stride) {
+    const i = k * 4;
     const v = arr[i + 3];
     const style = PARKED_STYLES[v % PARKED_STYLES.length];
     if (!byStyle.has(style)) byStyle.set(style, []);
     byStyle.get(style).push(arr[i], arr[i + 1], arr[i + 2], v);
   }
+  if (!parkedMat) parkedMat = bakedMaterial();
   const m4 = new THREE.Matrix4();
   const quat = new THREE.Quaternion();
   const up = new THREE.Vector3(0, 1, 0);
   const one = new THREE.Vector3(1, 1, 1);
+  const pos = new THREE.Vector3();
   const col = new THREE.Color();
   for (const [style, list] of byStyle) {
-    const proto = buildTrafficCar(style, 0xffffff, false);
+    if (!parkedGeo.has(style)) parkedGeo.set(style, bakeVehicle(buildTrafficCar(style, 0xffffff, false), { paint: null }));
+    const geo = parkedGeo.get(style);
+    if (!geo) continue;
     const n = list.length / 4;
-    for (const part of proto.children) {
-      const paint = part.material.userData?.isPaint;
-      const mat = paint ? part.material.clone() : part.material;
-      if (paint) mat.color.set(0xffffff);
-      const mesh = new THREE.InstancedMesh(part.geometry, mat, n);
-      mesh.userData.sharedGeometry = true;
-      for (let i = 0; i < n; i++) {
-        quat.setFromAxisAngle(up, list[i * 4 + 2]);
-        m4.compose(new THREE.Vector3(list[i * 4], 0, list[i * 4 + 1]), quat, one);
-        mesh.setMatrixAt(i, m4);
-        if (paint) mesh.setColorAt(i, col.set(PARKED_COLORS[list[i * 4 + 3] % PARKED_COLORS.length]));
-      }
-      mesh.castShadow = !!q.propShadows;
-      mesh.computeBoundingSphere();
-      group.add(mesh);
+    const mesh = new THREE.InstancedMesh(geo, parkedMat, n);
+    mesh.userData.sharedGeometry = true;
+    for (let i = 0; i < n; i++) {
+      quat.setFromAxisAngle(up, list[i * 4 + 2]);
+      m4.compose(pos.set(list[i * 4], 0, list[i * 4 + 1]), quat, one);
+      mesh.setMatrixAt(i, m4);
+      mesh.setColorAt(i, col.set(PARKED_COLORS[list[i * 4 + 3] % PARKED_COLORS.length]));
     }
+    mesh.castShadow = !!q.propShadows;
+    mesh.computeBoundingSphere();
+    group.add(mesh);
   }
   return group;
 }

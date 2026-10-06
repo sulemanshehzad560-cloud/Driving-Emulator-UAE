@@ -5,6 +5,7 @@ import { loadProfile, saveProfile, resetProfile, level } from './storage.js';
 import { CARS, carById } from './cars/catalog.js';
 import { CITIES } from './world/cities.js';
 import { QUALITY, RESOLUTIONS, SEASONS, TIMES, autoQuality, pixelRatioFor } from './render/env.js';
+import { installGradedToneMapping } from './render/cinematic.js';
 import { WorldMaterials, loadArtManifest } from './render/materials.js';
 import { Overview } from './world/overview.js';
 import { toWorld } from './world/projection.js';
@@ -27,9 +28,9 @@ try {
   throw e;
 }
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
+installGradedToneMapping(renderer); // ACES + colour grade inside every material
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap; // hardware-filtered; the soft variant costs many more texture taps per pixel
 
 const profile = loadProfile();
 const audio = new CarAudio();

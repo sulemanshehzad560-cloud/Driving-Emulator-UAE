@@ -11,7 +11,38 @@ export const shared = {
   uWet: { value: 0 },
   uTime: { value: 0 },
   uSand: { value: new THREE.Color(0xd8c29a) },
+  // world size of one screen pixel per metre of view distance: 2·tan(fov/2) / viewport height
+  uPxScale: { value: 0.002 },
 };
+
+/**
+ * Lane paint that never breaks up: each stripe is widened in the vertex shader
+ * to at least ~0.9 px on screen, and the extra width is faded through
+ * alpha-to-coverage (with the canvas' MSAA), so distant lines read as thin,
+ * continuous, slightly fainter lines instead of crawling dashes of pixels.
+ */
+function paintShader(mat) {
+  mat.alphaToCoverage = true;
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uPxScale = shared.uPxScale;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec3 aSide;\nuniform float uPxScale;\nvarying float vCover;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        {
+          float hw = abs(aSide.z);
+          vCover = 1.0;
+          if (hw > 0.0) {
+            float dist = max(0.5, -(modelViewMatrix * vec4(transformed, 1.0)).z);
+            float want = max(hw, dist * uPxScale * 0.45);
+            transformed.xz += aSide.xy * sign(aSide.z) * (want - hw);
+            vCover = hw / want;
+          }
+        }`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vCover;')
+      .replace('#include <alphatest_fragment>', '#include <alphatest_fragment>\ndiffuseColor.a *= vCover;');
+  };
+}
 
 const GLSL_NOISE = /* glsl */ `
   float uaeHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -110,7 +141,7 @@ function facadeShader(mat, { photo = false, key = 'facade' } = {}) {
           reflectedLight.directDiffuse *= mix(0.8, 1.0, smoothstep(0.0, 1.5, vLocalH));
         }`);
   };
-  mat.customProgramCacheKey = () => `uae-${key}-${photo}`;
+  mat.customProgramCacheKey = () => `uae-facade-${photo}`; // one program for all facades (only the photo flag changes the code)
 }
 
 /** Ground / sand / grass: large-scale colour variation hides tiling. */
@@ -124,7 +155,7 @@ function groundShader(mat, key) {
         diffuseColor.rgb *= 0.86 + v * 0.22 + v2 * 0.08;
       }`);
   };
-  mat.customProgramCacheKey = () => `uae-ground-${key}`;
+  mat.customProgramCacheKey = () => 'uae-ground';
 }
 
 function layered(mat, layer) {
@@ -236,6 +267,8 @@ export class WorldMaterials {
     const wear = this.tex(TG.paintWear(256));
     M.markW = layered(new THREE.MeshStandardMaterial({ color: 0xf4f4f0, map: wear, roughness: 0.6, emissive: 0x141414 }), 5);
     M.markY = layered(new THREE.MeshStandardMaterial({ color: 0xf2b800, map: wear, roughness: 0.6, emissive: 0x141000 }), 5);
+    paintShader(M.markW);
+    paintShader(M.markY);
 
     // ---------------- pavement & kerbs
     const pv = this.photo('pavers') || (() => {
@@ -352,6 +385,7 @@ export class WorldMaterials {
     const trunk = TG.palmTrunk(128);
     M.palmTrunk = new THREE.MeshStandardMaterial({ map: this.tex(trunk.color), normalMap: this.tex(trunk.normal, { srgb: false }), roughness: 1 });
     M.palmLeaf = new THREE.MeshStandardMaterial({ map: this.tex(TG.palmLeaf(256), { repeat: false }), alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.8 });
+    M.palmLeaf.alphaToCoverage = true; // soft, stable frond edges with MSAA instead of sparkling cut-outs
     M.pole = new THREE.MeshStandardMaterial({ color: 0x9aa2aa, metalness: 0.75, roughness: 0.35 });
     M.darkMetal = new THREE.MeshStandardMaterial({ color: 0x2c3036, metalness: 0.6, roughness: 0.45 });
     M.lampHead = new THREE.MeshStandardMaterial({ color: 0xe8e8e8, emissive: 0xffd6a0, emissiveIntensity: 0 });

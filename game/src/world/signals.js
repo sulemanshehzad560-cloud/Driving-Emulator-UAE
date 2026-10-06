@@ -2,6 +2,7 @@
 // junctions; nearby signal nodes are clustered into one controller with two
 // phase groups (by approach axis) so crossing streams never get green together.
 import * as THREE from 'three';
+import { bakeStatic, bakedMaterial } from '../render/batch.js';
 
 const GREEN = 16, AMBER = 3, ALLRED = 2;
 
@@ -115,7 +116,10 @@ export class TrafficLights {
     const rec = this.byTile.get(tile.key);
     if (!rec) return;
     this.scene.remove(rec.group);
-    rec.group.traverse((o) => o.isInstancedMesh && o.dispose());
+    rec.group.traverse((o) => {
+      if (o.isInstancedMesh) o.dispose();
+      else if (o.isMesh) o.geometry.dispose(); // baked, per-cell geometry
+    });
     const set = new Set(rec.aps);
     this.approaches = this.approaches.filter((a) => !set.has(a));
     for (const ap of rec.aps) {
@@ -137,11 +141,9 @@ export class TrafficLights {
     const heads = new THREE.InstancedMesh(G.head, M.head, n * 2);
     const plates = new THREE.InstancedMesh(G.plate, M.plate, n * 2);
     const visors = new THREE.InstancedMesh(G.visor, M.head, n * 6);
-    const bulbs = [0, 1, 2].map(() => {
-      const m = new THREE.InstancedMesh(G.lens, M.lens, n * 2);
-      m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 2 * 3), 3);
-      return m;
-    });
+    // all lamp lenses of the cell in one instanced mesh: index (head * 3 + bulb)
+    const bulbs = new THREE.InstancedMesh(G.lens, M.lens, n * 6);
+    bulbs.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 6 * 3), 3);
     const obstacles = []; // signal poles are solid: [x, z, r, ...]
     const m4 = new THREE.Matrix4();
     const q = new THREE.Quaternion();
@@ -168,7 +170,7 @@ export class TrafficLights {
         for (let b = 0; b < 3; b++) {
           const off = new THREE.Vector3(0, 0.4 - b * 0.4, 0.165).applyQuaternion(q);
           m4.compose(v.set(hx + off.x, hy + off.y, hz + off.z), q, one);
-          bulbs[b].setMatrixAt(hi, m4);
+          bulbs.setMatrixAt(hi * 3 + b, m4);
           const offV = new THREE.Vector3(0, 0.4 - b * 0.4 + 0.02, 0.27).applyQuaternion(q);
           m4.compose(v.set(hx + offV.x, hy + offV.y, hz + offV.z), q, one);
           visors.setMatrixAt(hi * 3 + b, m4);
@@ -176,15 +178,17 @@ export class TrafficLights {
       });
       ap.index = i;
     });
-    for (const m of [poles, arms, heads, plates, visors, ...bulbs]) {
-      m.computeBoundingSphere();
-      group.add(m);
-    }
+    for (const m of [poles, arms, heads, plates, visors]) group.add(m);
     poles.castShadow = arms.castShadow = heads.castShadow = true;
-    group.userData.bulbs = bulbs;
+    // the static hardware becomes one batched mesh; only the lenses stay instanced
+    if (!this.plainMat) this.plainMat = bakedMaterial();
+    const out = bakeStatic(group, { castShadow: true, plainMaterial: this.plainMat });
+    group.traverse((o) => o.isInstancedMesh && o.dispose());
+    bulbs.computeBoundingSphere();
+    out.add(bulbs);
     for (const ap of aps) ap.bulbs = bulbs;
-    group.userData.obstacles = obstacles;
-    return group;
+    out.userData.obstacles = obstacles;
+    return out;
   }
 
   stateOf(ctrl, groupIdx, t) {
@@ -211,14 +215,14 @@ export class TrafficLights {
       if (st === ap.state && !force) continue;
       ap.state = st;
       for (let k = 0; k < 2; k++) {
-        const hi = ap.index * 2 + k;
-        ap.bulbs[0].setColorAt(hi, c.setRGB(...(st === 'red' ? RED : off)));
-        ap.bulbs[1].setColorAt(hi, c.setRGB(...(st === 'amber' ? AMB : off)));
-        ap.bulbs[2].setColorAt(hi, c.setRGB(...(st === 'green' ? GRN : off)));
+        const hi = (ap.index * 2 + k) * 3;
+        ap.bulbs.setColorAt(hi, c.setRGB(...(st === 'red' ? RED : off)));
+        ap.bulbs.setColorAt(hi + 1, c.setRGB(...(st === 'amber' ? AMB : off)));
+        ap.bulbs.setColorAt(hi + 2, c.setRGB(...(st === 'green' ? GRN : off)));
       }
       dirty.add(ap.bulbs);
     }
-    for (const b of dirty) for (const m of b) m.instanceColor.needsUpdate = true;
+    for (const b of dirty) b.instanceColor.needsUpdate = true;
   }
 
   /** Signal for traffic moving along (dx, dz) into node id, or null. */

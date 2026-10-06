@@ -1,10 +1,26 @@
 // AI traffic on the streamed road graph: cars follow lanes, keep a safe gap,
 // slow for bends, obey traffic lights and stop signs, and are recycled
 // around the player. Density follows the road class (busier on motorways).
-import { buildTrafficCar, styleDims } from '../cars/carFactory.js';
+import { blobMaterial, buildTrafficCar, styleDims } from '../cars/carFactory.js';
 import { modelTrafficCar } from '../cars/modelCars.js';
 import { TRAFFIC_TYPES } from '../cars/catalog.js';
 import { lanesPerDirection } from '../world/graph.js';
+import { bakeVehicle, bakedMaterial } from '../render/batch.js';
+import * as THREE from 'three';
+
+// one baked geometry per car type and colour, shared by every car that uses it
+const bakedCars = new Map();
+function trafficMesh(t, color, tpl) {
+  const key = `${TRAFFIC_TYPES.indexOf(t)}-${color}`;
+  let geo = bakedCars.get(key);
+  if (!geo) {
+    const src = tpl ? modelTrafficCar(tpl, t.paintMat, color) : buildTrafficCar(t.style, color, !!t.taxi, t.taxiRoof);
+    geo = bakeVehicle(src, { paint: color });
+    bakedCars.set(key, geo);
+  }
+  // one draw call per car; its own material instance only carries the brake-lamp state
+  return new THREE.Mesh(geo, bakedMaterial({ lights: true }));
+}
 
 function pickType(rand) {
   const total = TRAFFIC_TYPES.reduce((s, t) => s + t.weight, 0);
@@ -31,12 +47,26 @@ export class Traffic {
       const t = pickType((i * 0.61803398875) % 1);
       const color = t.paints[i % t.paints.length];
       const tpl = t.model && templates.get(t.model);
-      const mesh = tpl ? modelTrafficCar(tpl, t.paintMat, color) : buildTrafficCar(t.style, color, !!t.taxi, t.taxiRoof);
+      const mesh = trafficMesh(t, color, tpl);
       mesh.visible = false;
       scene.add(mesh);
       const dims = styleDims(t.style);
-      this.cars.push({ mesh, type: t, len: (tpl && t.len) || dims.L, edge: null, s: 0, speed: 0, lane: 0, active: false, heading: 0, x: 0, z: 0 });
+      this.cars.push({ mesh, type: t, len: (tpl && t.len) || dims.L, width: dims.W, edge: null, s: 0, speed: 0, lane: 0, active: false, heading: 0, x: 0, z: 0, index: i });
     }
+    // contact shadows of all traffic cars: one instanced draw call
+    const plane = new THREE.PlaneGeometry(1, 1);
+    plane.rotateX(-Math.PI / 2);
+    this.blobs = new THREE.InstancedMesh(plane, blobMaterial(), this.cars.length);
+    this.blobs.frustumCulled = false;
+    this.blobs.renderOrder = 1;
+    this.hidden = new THREE.Matrix4().makeScale(0, 0, 0);
+    for (let i = 0; i < this.cars.length; i++) this.blobs.setMatrixAt(i, this.hidden);
+    scene.add(this.blobs);
+    this.m4 = new THREE.Matrix4();
+    this.q4 = new THREE.Quaternion();
+    this.up = new THREE.Vector3(0, 1, 0);
+    this.p3 = new THREE.Vector3();
+    this.s3 = new THREE.Vector3();
     this.activeTarget = count;
   }
 
@@ -114,11 +144,17 @@ export class Traffic {
     car.z += (z - car.z) * k;
     car.mesh.position.set(car.x, 0, car.z);
     car.mesh.rotation.y = car.heading;
+    this.q4.setFromAxisAngle(this.up, car.heading);
+    this.m4.compose(this.p3.set(car.x, 0.11, car.z), this.q4, this.s3.set(car.width * 1.3, 1, car.len * 1.18));
+    this.blobs.setMatrixAt(car.index, this.m4);
+    this.blobs.instanceMatrix.needsUpdate = true;
   }
 
   despawn(c) {
     c.active = false;
     c.mesh.visible = false;
+    this.blobs.setMatrixAt(c.index, this.hidden);
+    this.blobs.instanceMatrix.needsUpdate = true;
   }
 
   update(dt, player) {
@@ -188,7 +224,8 @@ export class Traffic {
       if (target > c.speed) c.speed = Math.min(target, c.speed + (c.type.big ? 1.4 : 2.6) * dt);
       else c.speed = Math.max(target, c.speed - (gap < 8 ? 12 : 7) * dt);
       c.s += c.speed * dt;
-      c.braking = target < c.speed - 0.5;
+      c.braking = target < c.speed - 0.5 || c.speed < 0.3;
+      c.mesh.material.userData.u.uBrake.value = c.braking ? 1 : 0;
 
       while (c.active && c.s > c.edge.len) {
         c.s -= c.edge.len;

@@ -33,17 +33,19 @@ class Geo {
     this.uv = [];
     this.c = opts.color ? [] : null;
     this.r = opts.road ? [] : null;
+    this.s = opts.side ? [] : null; // lane paint: lateral direction (x, z) + signed half width
     this.i = [];
   }
   get count() {
     return this.p.length / 3;
   }
-  vert(x, y, z, nx, ny, nz, u, v, col, road) {
+  vert(x, y, z, nx, ny, nz, u, v, col, road, side) {
     this.p.push(x, y, z);
     this.n.push(nx, ny, nz);
     this.uv.push(u, v);
     if (this.c) this.c.push(col ? col[0] : 1, col ? col[1] : 1, col ? col[2] : 1);
     if (this.r) this.r.push(road ? road[0] : 0, road ? road[1] : 5);
+    if (this.s) this.s.push(side ? side[0] : 0, side ? side[1] : 0, side ? side[2] : 0);
     return this.count - 1;
   }
   quad(a, b, c, d) {
@@ -62,6 +64,7 @@ class Geo {
     };
     if (this.c) o.c = new Float32Array(this.c);
     if (this.r) o.r = new Float32Array(this.r);
+    if (this.s) o.s = new Float32Array(this.s);
     return o;
   }
 }
@@ -175,7 +178,7 @@ export function buildTile(T, opts) {
 
   const G = {
     ground: new Geo(), sea: new Geo(), road: new Geo({ road: true }), junction: new Geo({ road: true }), shoulder: new Geo(),
-    sidewalk: new Geo(), kerb: new Geo(), kerbStriped: new Geo(), markW: new Geo(), markY: new Geo(),
+    sidewalk: new Geo(), kerb: new Geo(), kerbStriped: new Geo(), markW: new Geo({ side: true }), markY: new Geo({ side: true }),
     barrier: new Geo(), guardrail: new Geo(), roof: new Geo({ color: true }),
     park: new Geo(), golf: new Geo(), pitch: new Geo(), farm: new Geo(), mangrove: new Geo(), beach: new Geo(),
     parking: new Geo(), sandArea: new Geo(), water: new Geo(),
@@ -278,9 +281,9 @@ export function buildTile(T, opts) {
       } else {
         // every street gets a raised kerb on both edges; striped on main roads
         const striped = r.rank >= 5;
-        const line = densify(seg, 3);
-        kerb(striped ? G.kerbStriped : G.kerb, line, hw, striped, clip);
-        kerb(striped ? G.kerbStriped : G.kerb, line, -hw, striped, clip);
+        for (const off of [hw, -hw]) {
+          for (const piece of clipLine(seg, off + Math.sign(off) * 0.15, clip)) kerb(striped ? G.kerbStriped : G.kerb, piece, off, striped);
+        }
       }
     }
     markings(G, r, pts, junctionR, clip);
@@ -450,15 +453,35 @@ function sideStrip(g, pts, from, to, y, uvScale, both = true) {
   }
 }
 
-/** Insert points so no segment is longer than `step` metres. */
-function densify(pts, step) {
-  const out = [pts[0]];
+/**
+ * Split a polyline into the pieces whose offset line (`off` metres to the
+ * right) is not on another road. Keeps the original vertices, so straight
+ * stretches stay single quads; the test samples every `step` metres.
+ */
+function clipLine(pts, off, clip, step = 3) {
+  const pieces = [];
+  let cur = null;
   for (let i = 1; i < pts.length; i++) {
     const [ax, az] = pts[i - 1], [bx, bz] = pts[i];
-    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / step));
-    for (let k = 1; k <= n; k++) out.push([ax + ((bx - ax) * k) / n, az + ((bz - az) * k) / n]);
+    const len = Math.hypot(bx - ax, bz - az);
+    if (len < 1e-3) continue;
+    const nx = -(bz - az) / len, nz = (bx - ax) / len;
+    const n = Math.max(1, Math.ceil(len / step));
+    for (let k = 0; k < n; k++) {
+      const t0 = k / n, tm = (k + 0.5) / n;
+      const free = !clip(ax + (bx - ax) * tm + nx * off, az + (bz - az) * tm + nz * off);
+      const p0 = [ax + (bx - ax) * t0, az + (bz - az) * t0];
+      if (free && !cur) cur = [p0];
+      else if (!free && cur) {
+        if (k > 0) cur.push(p0);
+        if (cur.length > 1) pieces.push(cur);
+        cur = null;
+      }
+    }
+    if (cur) cur.push([bx, bz]);
   }
-  return out;
+  if (cur && cur.length > 1) pieces.push(cur);
+  return pieces;
 }
 
 /**
@@ -524,7 +547,7 @@ function trimLine(pts, a, b) {
 }
 
 /** Raised kerb (15 cm) along an offset line: top face + face towards the road. */
-function kerb(g, pts, off, striped, clip) {
+function kerb(g, pts, off, striped) {
   const nrm = lateralNormals(pts);
   const s = Math.sign(off);
   const inner = off, outer = off + s * 0.3;
@@ -539,10 +562,7 @@ function kerb(g, pts, off, striped, clip) {
     const b = g.vert(x + nx * inner, 0.2, z + nz * inner, -nx * s, 0, -nz * s, 0.5, uv);
     const c = g.vert(x + nx * inner, 0.2, z + nz * inner, 0, 1, 0, 0.5, uv);
     const d = g.vert(x + nx * outer, 0.2, z + nz * outer, 0, 1, 0, 1, uv);
-    const blocked = clip && i > 0 && clip(
-      (x + pts[i - 1][0]) / 2 + nx * (off + s * 0.15),
-      (z + pts[i - 1][1]) / 2 + nz * (off + s * 0.15));
-    if (prev && !blocked) {
+    if (prev) {
       // counter-clockwise seen from the road / from above (front faces)
       if (s > 0) {
         g.quad(prev[1], b, a, prev[0]);
@@ -646,10 +666,11 @@ function paintQuad(g, a, b, off, w, dash, trimA, trimB, clip) {
     const hw = w / 2;
     const p0x = a[0] + ux * s0 + rx * off, p0z = a[1] + uz * s0 + rz * off;
     const p1x = a[0] + ux * s1 + rx * off, p1z = a[1] + uz * s1 + rz * off;
-    const i0 = g.vert(p0x - rx * hw, 0.09, p0z - rz * hw, 0, 1, 0, p0x / 3, p0z / 3);
-    const i1 = g.vert(p0x + rx * hw, 0.09, p0z + rz * hw, 0, 1, 0, (p0x + 0.3) / 3, p0z / 3);
-    const i2 = g.vert(p1x + rx * hw, 0.09, p1z + rz * hw, 0, 1, 0, (p1x + 0.3) / 3, p1z / 3);
-    const i3 = g.vert(p1x - rx * hw, 0.09, p1z - rz * hw, 0, 1, 0, p1x / 3, p1z / 3);
+    const sl = [rx, rz, -hw], sr = [rx, rz, hw];
+    const i0 = g.vert(p0x - rx * hw, 0.09, p0z - rz * hw, 0, 1, 0, p0x / 3, p0z / 3, null, null, sl);
+    const i1 = g.vert(p0x + rx * hw, 0.09, p0z + rz * hw, 0, 1, 0, (p0x + 0.3) / 3, p0z / 3, null, null, sr);
+    const i2 = g.vert(p1x + rx * hw, 0.09, p1z + rz * hw, 0, 1, 0, (p1x + 0.3) / 3, p1z / 3, null, null, sr);
+    const i3 = g.vert(p1x - rx * hw, 0.09, p1z - rz * hw, 0, 1, 0, p1x / 3, p1z / 3, null, null, sl);
     g.quad(i0, i1, i2, i3);
   };
   // drop the pieces that would lie on another road's carriageway

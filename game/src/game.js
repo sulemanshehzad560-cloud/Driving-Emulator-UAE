@@ -2,7 +2,7 @@
 // law, cameras (incl. live mirrors), navigation, HUD, missions and the
 // cinematic render pipeline.
 import * as THREE from 'three';
-import { CinematicPipeline, gradeFor } from './render/cinematic.js';
+import { CinematicPipeline } from './render/cinematic.js';
 import { Environment, QUALITY, TIMES, SEASONS } from './render/env.js';
 import { ReflectionProbe } from './render/probe.js';
 import { DynamicGraph } from './world/graph.js';
@@ -11,7 +11,7 @@ import { TrafficLights } from './world/signals.js';
 import { Enforcement } from './world/enforcement.js';
 import { Props } from './world/props.js';
 import { farTerrain } from './world/overview.js';
-import { buildCar, styleDims } from './cars/carFactory.js';
+import { contactShadow, buildCar, styleDims } from './cars/carFactory.js';
 import { buildInterior, drawCluster } from './cars/interior.js';
 import { loadCarModel, loadBestCarModel, instantiateModelCar } from './cars/modelCars.js';
 import { TRAFFIC_TYPES, carById } from './cars/catalog.js';
@@ -97,7 +97,9 @@ export class Game {
         this.lights.addTile(t);
         this.enforcement.addTile(t);
         this.colliders.addTile(t.key, [...tileObstacles(t.data), ...this.lights.obstaclesFor(t.key), ...this.enforcement.obstaclesFor(t.key)]);
+        this.env.invalidateShadows();
       },
+      onChunk: (tier) => tier === 'near' && this.env.invalidateShadows(),
       onRemove: (t) => {
         this.colliders.removeTile(t.key);
         this.enforcement.removeTile(t);
@@ -119,6 +121,7 @@ export class Game {
       }
     }
     if (!this.car) this.car = buildCar({ style: this.spec.style, color: paint, detail: true, quality: this.qualityKey === 'low' ? 'low' : 'high' });
+    this.groundCar();
     this.scene.add(this.car);
     this.player = new Vehicle(this.spec);
     this.addLights();
@@ -134,7 +137,7 @@ export class Game {
 
     // UI
     this.uiRoot = document.getElementById('game-ui');
-    this.uiRoot.innerHTML = '<div id="hud"></div><div id="controls"></div><div id="mirror-frames"></div><div id="pause" class="hidden"></div>';
+    this.uiRoot.innerHTML = '<div id="vignette"></div><div id="hud"></div><div id="controls"></div><div id="mirror-frames"></div><div id="pause" class="hidden"></div>';
     this.hud = new Hud(document.getElementById('hud'), this);
     this.input = new Input(document.getElementById('controls'), this.settings.controls, this.settings.sensitivity);
     for (const a of ['lights', 'indLeft', 'indRight', 'hazard', 'camera', 'map', 'radio', 'pause']) this.input.actions[a] = () => this.action(a);
@@ -271,6 +274,27 @@ export class Game {
     }
   }
 
+  /**
+   * Contact shadow under the player's car. With cached sun shadows (phones)
+   * the car itself does not cast into the shadow map; the contact shadow
+   * grounds it instead, the way mobile racing games do.
+   */
+  groundCar() {
+    const car = this.car;
+    let blob = null;
+    car.traverse((o) => { if (o.userData.isBlob) blob = o; });
+    if (!blob) {
+      const box = new THREE.Box3().setFromObject(car);
+      const size = box.getSize(new THREE.Vector3());
+      const centre = box.getCenter(new THREE.Vector3());
+      blob = contactShadow(Math.min(size.x, 2.4), Math.min(size.z, 6));
+      blob.position.x = centre.x - car.position.x;
+      blob.position.z = centre.z - car.position.z;
+      car.add(blob);
+    }
+    if (this.q.shadowCache !== false) car.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+  }
+
   setupPost() {
     this.post = null;
     if (!this.q.post) return;
@@ -291,12 +315,11 @@ export class Game {
   }
 
   applyEnvironment() {
-    const { night, wet, sunset } = this.env.set(this.hour, this.settings.season);
+    const { night, wet } = this.env.set(this.hour, this.settings.season);
     this.night = night;
     this.wet = wet;
     this.mats.setNight(night);
     this.mats.setWet(wet);
-    if (this.post) this.post.setGrade(gradeFor({ night, sunsetAmount: sunset, season: this.settings.season }));
     if (this.bloom) {
       this.bloom.strength = 0.12 + night * 0.5;
       this.bloom.threshold = night > 0.5 ? 0.85 : 2.5;
@@ -802,7 +825,7 @@ export class Game {
     }
     this.updateClimate(dt);
     this.lights.update(this.time);
-    if (this.frame % 10 === 0) this.lights.cull(p.x, p.z, this.q.nearRadius ? this.q.nearRadius + 200 : 450);
+    if (this.frame % 10 === 0) this.lights.cull(p.x, p.z, this.lights.cullRadius || (this.q.nearRadius ? this.q.nearRadius + 200 : 450));
     this.traffic.update(dt, p);
     this.updateMission();
     this.syncCar(input);
@@ -1066,11 +1089,13 @@ export class Game {
       }
       this.camPos.lerp(target, 1 - Math.exp(-dt * 6));
       cam.position.set(this.camPos.x + sx, this.camPos.y + sy, this.camPos.z);
-      cam.fov = 58 + speedK * 14;
+      cam.fov = 58 + speedK * 6; // a gentle widening only: big FOV changes stretch the picture at speed
       this.camLook.set(p.x + fx * 0.8, 1.0, p.z + fz * 0.8);
       cam.lookAt(this.camLook);
     }
     cam.updateProjectionMatrix();
+    const h = this.renderer.getDrawingBufferSize(this.tmpV2 || (this.tmpV2 = new THREE.Vector2())).y || 720;
+    this.mats.shared.uPxScale.value = (2 * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2)) / h;
   }
 
   renderMirrors() {
@@ -1101,9 +1126,10 @@ export class Game {
   }
 
   /**
-   * Keep the frame rate smooth: first trade resolution (Auto resolution only,
-   * never below 480 lines), then switch off the most expensive effects one
-   * step at a time and pull in the prop draw distance.
+   * Keep the frame rate smooth. When the game runs below ~28 fps for a few
+   * seconds it first sheds the most expensive extras (reflection probe,
+   * mirror rate, prop range, shadows, Ultra post-processing), and only then
+   * lowers the resolution, never below 85 % (blocky pixels look broken).
    */
   adaptResolution(dt) {
     const pf = this.perf;
@@ -1111,65 +1137,58 @@ export class Game {
     pf.frames++;
     if (pf.acc < 1) return;
     const fps = pf.frames / pf.acc;
+    this.fps = fps;
     pf.acc = 0;
     pf.frames = 0;
-    if (this.paused || this.loading) return;
+    if (this.paused) return;
     if (fps < 28) pf.slow++;
     else pf.slow = 0;
-    if (fps > 50) pf.fast++;
-    else pf.fast = 0;
-    const auto = this.settings.resolution === 'auto';
+    if (pf.slow < 3) return;
+    pf.slow = 0;
+    if (this.reduceEffects()) return;
+    if (this.settings.resolution !== 'auto') return;
     const base = this.basePixelRatio || (this.basePixelRatio = this.renderer.getPixelRatio());
-    // never scale below 480 rendered lines: blocky pixels are worse than a few fps
-    const minScale = Math.min(1, Math.max(0.6, 480 / (Math.min(innerWidth, innerHeight) * base)));
-    if (pf.slow >= 3) {
-      pf.slow = 0;
-      if (auto && pf.scale > minScale) {
-        pf.scale = Math.max(minScale, pf.scale - 0.1);
-        this.renderer.setPixelRatio(base * pf.scale);
-        this.resize();
-      } else this.reduceEffects();
-    } else if (auto && pf.fast >= 6 && pf.scale < 1 && !pf.level) {
-      pf.scale = Math.min(1, pf.scale + 0.1);
-      pf.fast = 0;
+    if (pf.scale > 0.86) {
+      pf.scale = Math.max(0.85, pf.scale - 0.075);
       this.renderer.setPixelRatio(base * pf.scale);
       this.resize();
     }
   }
 
+  /** One step of effect reduction; false when there is nothing left to drop. */
   reduceEffects() {
     const pf = this.perf;
-    pf.level = (pf.level || 0) + 1;
     const q = this.q;
-    if (pf.level === 1) {
-      if (this.bloom) this.bloom.enabled = false;
+    const step = (pf.level || 0) + 1;
+    if (step === 1) {
       this.probe = null;
       q.mirrorEvery = Math.max(q.mirrorEvery, 3);
-    } else if (pf.level === 2) {
-      q.nearRadius = Math.round((q.nearRadius || 260) * 0.7);
-      this.streamer.propRadius = Math.round(this.streamer.propRadius * 0.7);
-    } else if (pf.level === 3) {
+      if (this.post) {
+        this.post.dispose();
+        this.post = null;
+        this.bloom = null;
+      }
+    } else if (step === 2) {
+      q.nearRadius = Math.round((q.nearRadius || 260) * 0.75);
+      this.streamer.propRadius = Math.round(this.streamer.propRadius * 0.75);
+      this.lights.cullRadius = 300;
+    } else if (step === 3) {
+      if (!this.renderer.shadowMap.enabled) return false;
       this.renderer.shadowMap.enabled = false;
       this.scene.traverse((o) => { if (o.material && !Array.isArray(o.material)) o.material.needsUpdate = true; });
-    } else if (pf.level === 4 && this.post) {
-      this.post.dispose();
-      this.post = null;
-      this.bloom = null;
-    } else return;
-    if (pf.level === 1) this.hud.toast('Performance mode: effects reduced for a smooth frame rate', 'info', 3500);
+    } else return false;
+    pf.level = step;
+    if (step === 1) this.hud.toast('Performance mode: effects reduced for a smooth frame rate', 'info', 3500);
+    return true;
   }
 
   render(dt = 0.016) {
     this.adaptResolution(dt);
     if (this.probe) this.probe.update(this.player, [this.car]);
     const any = this.renderMirrors();
-    if (this.post) {
-      this.post.update(this.time, {
-        speed: Math.max(0, Math.min(1, (this.player.kmh - 110) / 170)) * (this.cameraMode === 'cockpit' ? 0.5 : 1),
-        cinematic: this.cameraMode === 'cinematic',
-      });
-      this.post.render();
-    } else this.renderer.render(this.scene, this.camera);
+    document.getElementById('vignette')?.classList.toggle('cine', this.cameraMode === 'cinematic');
+    if (this.post) this.post.render();
+    else this.renderer.render(this.scene, this.camera);
     if (any) {
       const ac = this.renderer.autoClear;
       this.renderer.autoClear = false;

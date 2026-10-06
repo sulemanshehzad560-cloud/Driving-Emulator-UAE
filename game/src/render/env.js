@@ -11,9 +11,9 @@ import { physicsCore } from '../sim/physicsCore.js';
 
 export const QUALITY = {
   low: { name: 'Low', tex: '1k', hdri: '1k', hdCars: false, post: false, msaa: 0, ao: false, flare: false, probe: false, shadows: false, propShadows: false, shadowMap: 0, tileRadius: 1100, nearRadius: 160, propRadius: 380, maxBuildingsPerTile: 1200, traffic: 10, far: 1400, bloom: false, mirrorEvery: 3, mirrorScale: 0.5, parkedCars: false },
-  medium: { name: 'Medium', tex: '1k', hdri: '1k', hdCars: false, post: true, msaa: 2, ao: false, flare: false, probe: false, shadows: true, propShadows: false, shadowMap: 1024, tileRadius: 1400, nearRadius: 220, propRadius: 550, maxBuildingsPerTile: 2500, traffic: 18, far: 1900, bloom: false, mirrorEvery: 2, mirrorScale: 0.75, parkedCars: true },
-  high: { name: 'High', tex: '2k', hdri: '2k', hdCars: true, post: true, msaa: 2, ao: false, flare: true, probe: true, shadows: true, propShadows: true, shadowMap: 2048, tileRadius: 1700, nearRadius: 280, propRadius: 700, maxBuildingsPerTile: 4000, traffic: 26, far: 2400, bloom: true, mirrorEvery: 1, mirrorScale: 1, parkedCars: true },
-  ultra: { name: 'Ultra', tex: '4k', hdri: '4k', hdCars: true, post: true, msaa: 4, ao: true, flare: true, probe: true, shadows: true, propShadows: true, shadowMap: 4096, tileRadius: 2100, nearRadius: 360, propRadius: 900, maxBuildingsPerTile: 6000, traffic: 34, far: 3000, bloom: true, mirrorEvery: 1, mirrorScale: 1.25, parkedCars: true },
+  medium: { name: 'Medium', tex: '1k', hdri: '1k', hdCars: false, post: false, msaa: 2, ao: false, flare: false, probe: false, shadows: true, propShadows: false, shadowMap: 1024, tileRadius: 1400, nearRadius: 220, propRadius: 550, maxBuildingsPerTile: 2500, traffic: 18, far: 1900, bloom: false, mirrorEvery: 2, mirrorScale: 0.75, parkedCars: true },
+  high: { name: 'High', tex: '2k', hdri: '2k', hdCars: true, post: false, msaa: 2, ao: false, flare: true, probe: true, shadows: true, propShadows: true, shadowMap: 2048, tileRadius: 1700, nearRadius: 280, propRadius: 700, maxBuildingsPerTile: 4000, traffic: 26, far: 2400, bloom: true, mirrorEvery: 1, mirrorScale: 1, parkedCars: true },
+  ultra: { name: 'Ultra', shadowCache: false, tex: '4k', hdri: '4k', hdCars: true, post: true, msaa: 4, ao: true, flare: true, probe: true, shadows: true, propShadows: true, shadowMap: 4096, tileRadius: 2100, nearRadius: 360, propRadius: 900, maxBuildingsPerTile: 6000, traffic: 34, far: 3000, bloom: true, mirrorEvery: 1, mirrorScale: 1.25, parkedCars: true },
 };
 
 export const RESOLUTIONS = {
@@ -167,7 +167,7 @@ export class Environment {
     if (quality.shadows) {
       this.sun.castShadow = true;
       this.sun.shadow.mapSize.set(quality.shadowMap, quality.shadowMap);
-      const d = 110;
+      const d = 120;
       Object.assign(this.sun.shadow.camera, { left: -d, right: d, top: d, bottom: -d, near: 1, far: 900 });
       this.sun.shadow.bias = -0.0003;
       this.sun.shadow.normalBias = 0.05;
@@ -262,6 +262,8 @@ export class Environment {
 
   /** hour: 0..24, season key */
   set(hour, seasonKey) {
+    this.shadowDirty = true;
+    this.shadowAge = 1;
     const season = SEASONS[seasonKey] || SEASONS.summer;
     this.season = season;
     this.hour = hour;
@@ -368,10 +370,37 @@ export class Environment {
     this.scene.add(this.particles);
   }
 
+  /** Something that casts shadows changed (new buildings / props streamed in). */
+  invalidateShadows() {
+    this.shadowDirty = true;
+  }
+
   update(dt, focus, wind = 0) {
     const d = 350;
     let tx = focus.x, tz = focus.z;
     if (this.sun.castShadow) {
+      const sm = this.renderer.shadowMap;
+      if (this.quality.shadowCache !== false) {
+        // Cached sun shadows: only the static city casts into the shadow map
+        // (cars use contact shadows), so it is re-rendered when the player has
+        // moved on ~30 m, the sun has moved, or new geometry streamed in
+        // (at most twice a second) – not every frame.
+        sm.autoUpdate = false;
+        this.shadowAge = (this.shadowAge || 0) + dt;
+        const f = focus.forward || [0, 0];
+        const lead = Math.min(40, (Math.abs(focus.kmh || 0) / 3.6) * 1.5);
+        const wx = focus.x + f[0] * lead, wz = focus.z + f[1] * lead;
+        const a = this.shadowAnchor;
+        const moved = !a || Math.hypot(wx - a.x, wz - a.z) > 30;
+        if (moved || (this.shadowDirty && this.shadowAge > 0.5)) {
+          this.shadowAnchor = { x: wx, z: wz };
+          this.shadowDirty = false;
+          this.shadowAge = 0;
+          sm.needsUpdate = true;
+        }
+        tx = this.shadowAnchor.x;
+        tz = this.shadowAnchor.z;
+      } else sm.autoUpdate = true;
       // snap the shadow camera to whole texels to stop shadow shimmer while driving
       const texel = (this.sun.shadow.camera.right * 2) / this.sun.shadow.mapSize.x;
       tx = Math.round(tx / texel) * texel;

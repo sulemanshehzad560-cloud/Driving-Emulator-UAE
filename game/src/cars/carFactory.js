@@ -616,15 +616,7 @@ export function buildCar({ style = 'sedan', color = 0xffffff, detail = true, tax
     }
   }
 
-  // contact shadow
-  const blob = new THREE.Mesh(
-    new THREE.PlaneGeometry(st.W * 1.2, st.L * 1.08),
-    mat('blob', () => new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.42, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -8, polygonOffsetUnits: -16, map: blobTexture() })),
-  );
-  blob.rotation.x = -Math.PI / 2;
-  blob.position.y = 0.11;
-  blob.userData.isBlob = true;
-  car.add(blob);
+  car.add(contactShadow(st.W, st.L));
 
   car.userData = { wheels, brakeMat, headMat, drlMat, style: st, paint, indicators: indMat };
   car.traverse((o) => {
@@ -634,19 +626,38 @@ export function buildCar({ style = 'sedan', color = 0xffffff, detail = true, tax
 }
 
 let blobTex = null;
-function blobTexture() {
+/** Soft rounded-rectangle shadow (white = shadow; the material colour is black). */
+export function blobTexture() {
   if (blobTex) return blobTex;
   const c = document.createElement('canvas');
-  c.width = c.height = 64;
+  c.width = 128;
+  c.height = 256;
   const ctx = c.getContext('2d');
-  const g = ctx.createRadialGradient(32, 32, 4, 32, 32, 32);
-  g.addColorStop(0, 'rgba(255,255,255,1)');
-  g.addColorStop(0.6, 'rgba(255,255,255,0.7)');
-  g.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 64, 64);
+  ctx.fillStyle = '#000'; // opaque black background: the alpha map reads the green channel
+  ctx.fillRect(0, 0, 128, 256);
+  ctx.filter = 'blur(14px)';
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(30, 34, 68, 188, 26);
+  else ctx.rect(30, 34, 68, 188);
+  ctx.fill();
+  ctx.filter = 'none';
   blobTex = new THREE.CanvasTexture(c);
   return blobTex;
+}
+
+export function blobMaterial() {
+  return mat('blob', () => new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.62, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -8, polygonOffsetUnits: -16, alphaMap: blobTexture() }));
+}
+
+/** Contact shadow under a car: grounds it without a shadow-map pass. */
+export function contactShadow(W, L) {
+  const blob = new THREE.Mesh(new THREE.PlaneGeometry(W * 1.3, L * 1.18), blobMaterial());
+  blob.rotation.x = -Math.PI / 2;
+  blob.position.y = 0.11;
+  blob.userData.isBlob = true;
+  blob.castShadow = false;
+  return blob;
 }
 
 export function styleDims(style) {
