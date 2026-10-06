@@ -34,7 +34,7 @@ export function installGradedToneMapping(renderer) {
 	// grade: warm desert gain, slightly richer colour, a little more contrast
 	c *= vec3( 1.03, 1.0, 0.955 );
 	float l = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
-	c = mix( vec3( l ), c, 1.1 );
+	c = mix( vec3( l ), c, 1.04 );
 	c = c * c * ( 3.0 - 2.0 * c ) * 0.18 + c * 0.82;
 	return saturate( c );
 }`,

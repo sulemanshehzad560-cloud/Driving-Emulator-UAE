@@ -3,6 +3,7 @@
 // panels, A-pillars and headliner. Left-hand drive, as in the UAE.
 import * as THREE from 'three';
 import { styleDims } from './carFactory.js';
+import { fbm, normalFromHeight } from '../render/texgen.js';
 
 function canvasTex(canvas) {
   const t = new THREE.CanvasTexture(canvas);
@@ -11,23 +12,19 @@ function canvasTex(canvas) {
   return t;
 }
 
-// stitched soft-touch leather grain, generated once
+// pebbled leather / soft-touch grain as a tileable normal map, generated once
 let grainTex = null;
 function grain() {
   if (grainTex) return grainTex;
-  const c = document.createElement('canvas');
-  c.width = c.height = 128;
-  const x = c.getContext('2d');
-  const img = x.createImageData(128, 128);
-  for (let i = 0; i < img.data.length; i += 4) {
-    const v = 120 + Math.random() * 30;
-    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
-    img.data[i + 3] = 255;
-  }
-  x.putImageData(img, 0, 0);
-  grainTex = new THREE.CanvasTexture(c);
+  const n = 256;
+  const fine = fbm(n, { scale: 48, octaves: 2, seed: 7 });
+  const cells = fbm(n, { scale: 22, octaves: 1, seed: 3 });
+  const h = new Float32Array(n * n);
+  for (let i = 0; i < n * n; i++) h[i] = Math.pow(cells[i], 0.6) * 0.7 + fine[i] * 0.3;
+  grainTex = new THREE.CanvasTexture(normalFromHeight(h, n, 2.2));
   grainTex.wrapS = grainTex.wrapT = THREE.RepeatWrapping;
-  grainTex.repeat.set(6, 6);
+  grainTex.repeat.set(9, 9);
+  grainTex.anisotropy = 4;
   return grainTex;
 }
 
@@ -47,12 +44,18 @@ export function buildInterior(style, mapCanvas, paint) {
   const d = styleDims(style);
   const g = new THREE.Group();
   const tall = style === 'suv' || style === 'boxy' || style === 'g63' || style === 'van' || style === 'pickup';
-  const soft = new THREE.MeshStandardMaterial({ color: 0x1a1a1c, roughness: 0.82, bumpMap: grain(), bumpScale: 0.4 });
-  const leather = new THREE.MeshStandardMaterial({ color: 0x232021, roughness: 0.62, bumpMap: grain(), bumpScale: 0.3 });
-  const piano = new THREE.MeshStandardMaterial({ color: 0x050506, roughness: 0.08, metalness: 0.2 });
-  const alu = new THREE.MeshStandardMaterial({ color: 0xc4c8ce, roughness: 0.22, metalness: 1 });
-  const accent = new THREE.MeshStandardMaterial({ color: 0x3a2a20, roughness: 0.35, metalness: 0.15 });
-  const lining = new THREE.MeshStandardMaterial({ color: 0x57524d, roughness: 0.95, side: THREE.DoubleSide });
+  // two-tone luxury cabin: black soft-touch upper dash, cognac leather below, satin aluminium and
+  // open-pore wood trim, dark Alcantara pillars, light headliner
+  const n = grain();
+  const soft = new THREE.MeshStandardMaterial({ color: 0x2b2a2b, roughness: 0.78, normalMap: n, normalScale: new THREE.Vector2(0.35, 0.35) });
+  const leather = new THREE.MeshStandardMaterial({ color: 0x7a4426, roughness: 0.55, normalMap: n, normalScale: new THREE.Vector2(0.55, 0.55) });
+  const piano = new THREE.MeshStandardMaterial({ color: 0x070708, roughness: 0.06, metalness: 0.3 });
+  const alu = new THREE.MeshStandardMaterial({ color: 0xc9ccd1, roughness: 0.28, metalness: 1 });
+  const accent = new THREE.MeshStandardMaterial({ color: 0x4a2f1c, roughness: 0.42, metalness: 0.05 });
+  const pillarMat = new THREE.MeshStandardMaterial({ color: 0x232325, roughness: 0.95, normalMap: n, normalScale: new THREE.Vector2(0.2, 0.2) });
+  const lining = new THREE.MeshStandardMaterial({ color: 0x9c968d, roughness: 0.95, side: THREE.DoubleSide });
+  const ambient = new THREE.MeshStandardMaterial({ color: 0x0b1620, emissive: 0x39c6ff, emissiveIntensity: 0.6 });
+  const wheelLeather = new THREE.MeshStandardMaterial({ color: 0x1c1b1b, roughness: 0.5, normalMap: n, normalScale: new THREE.Vector2(0.6, 0.6) });
 
   const W = d.W - 0.16;
   const belt = d.belt;
@@ -81,6 +84,13 @@ export function buildInterior(style, mapCanvas, paint) {
   const stripAlu = new THREE.Mesh(new THREE.BoxGeometry(W, 0.006, 0.022), alu);
   stripAlu.position.set(0, dashTopY - 0.11, lipZ + 0.036);
   g.add(stripAlu);
+  const glow = new THREE.Mesh(new THREE.BoxGeometry(W - 0.1, 0.004, 0.012), ambient);
+  glow.position.set(0, dashTopY - 0.152, lipZ + 0.04);
+  g.add(glow);
+  // lower dash and knee bolster in leather
+  const lower = extrudeX([[lipZ + 0.02, dashTopY - 0.16], [lipZ + 0.12, dashTopY - 0.36], [lipZ + 0.1, dashTopY - 0.48], [lipZ - 0.02, dashTopY - 0.48], [lipZ - 0.03, dashTopY - 0.16]], W - 0.02, leather);
+  lower.position.z = 0.004;
+  g.add(lower);
 
   // widescreen digital cockpit: cluster behind the wheel + centre screen on one glass panel
   const clusterCanvas = document.createElement('canvas');
@@ -108,14 +118,19 @@ export function buildInterior(style, mapCanvas, paint) {
   hood.rotation.x = -0.12;
   g.add(hood);
 
-  // turbine air vents
-  for (const x of [-0.72, 0.36, 0.62]) {
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.042, 0.009, 8, 24), alu);
-    ring.position.set(x, dashTopY - 0.07, lipZ + 0.03);
-    g.add(ring);
-    const blades = new THREE.Mesh(new THREE.CircleGeometry(0.036, 12), piano);
-    blades.position.set(x, dashTopY - 0.07, lipZ + 0.028);
-    g.add(blades);
+  // slim horizontal air vents with aluminium frames and dark slats
+  for (const [x, w] of [[-0.74, 0.16], [0.02, 0.2], [0.62, 0.16]]) {
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(w + 0.012, 0.042, 0.012), alu);
+    frame.position.set(x, dashTopY - 0.06, lipZ + 0.028);
+    g.add(frame);
+    const slats = new THREE.Mesh(new THREE.BoxGeometry(w, 0.032, 0.014), piano);
+    slats.position.set(x, dashTopY - 0.06, lipZ + 0.031);
+    g.add(slats);
+    for (let k = -1; k <= 1; k++) {
+      const vane = new THREE.Mesh(new THREE.BoxGeometry(w - 0.01, 0.003, 0.016), alu);
+      vane.position.set(x, dashTopY - 0.06 + k * 0.009, lipZ + 0.033);
+      g.add(vane);
+    }
   }
   // climate buttons row
   for (let i = 0; i < 7; i++) {
@@ -134,16 +149,16 @@ export function buildInterior(style, mapCanvas, paint) {
 
   // steering wheel: thick leather rim, three alloy spokes, emblem on the airbag
   const wheel = new THREE.Group();
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.185, 0.026, 14, 48), leather);
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.185, 0.026, 14, 48), wheelLeather);
   wheel.add(rim);
   for (const a of [0, 2.2, -2.2]) {
-    const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.036, 0.022), a === 0 ? leather : alu);
+    const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.036, 0.022), a === 0 ? wheelLeather : alu);
     const ang = a - Math.PI / 2;
     spoke.position.set(Math.cos(ang) * 0.1, Math.sin(ang) * 0.1, 0);
     spoke.rotation.z = ang;
     wheel.add(spoke);
   }
-  const bag = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.08, 0.05, 28), leather);
+  const bag = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.08, 0.05, 28), wheelLeather);
   bag.rotation.x = Math.PI / 2;
   wheel.add(bag);
   const emblem = new THREE.Mesh(new THREE.TorusGeometry(0.025, 0.004, 8, 24), alu);
@@ -159,8 +174,8 @@ export function buildInterior(style, mapCanvas, paint) {
   column.rotation.x = Math.PI / 2;
   column.position.z = -0.16;
   const wheelMount = new THREE.Group();
-  wheelMount.position.set(-0.37, eyeY - 0.3, eyeZ - 0.4);
-  wheelMount.rotation.x = -0.42;
+  wheelMount.position.set(-0.37, eyeY - 0.37, eyeZ - 0.43); // low enough that the cluster reads above the rim
+  wheelMount.rotation.x = -0.36;
   wheelMount.add(wheel, column);
   // indicator / wiper stalks
   for (const s of [-1, 1]) {
@@ -186,11 +201,11 @@ export function buildInterior(style, mapCanvas, paint) {
     // A-pillar from the windscreen base up to the roof edge, leaning back towards the driver
     const baseZ = d.screenZ + 0.02, topZ = Math.max(d.roofFrontZ, d.screenZ + 0.3);
     const len = Math.hypot(roofY - belt, topZ - baseZ);
-    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.075, len, 0.09), lining);
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.07, len, 0.085), pillarMat);
     pillar.position.set(s * (W / 2 - 0.03), (belt + roofY) / 2, (baseZ + topZ) / 2);
     pillar.rotation.x = Math.atan2(topZ - baseZ, roofY - belt);
     g.add(pillar);
-    const pillarB = new THREE.Mesh(new THREE.BoxGeometry(0.07, d.roof - belt, 0.14), lining);
+    const pillarB = new THREE.Mesh(new THREE.BoxGeometry(0.07, d.roof - belt, 0.14), pillarMat);
     pillarB.position.set(s * (W / 2 + 0.01), (d.roof + belt) / 2, eyeZ + 0.4);
     g.add(pillarB);
   }
@@ -206,7 +221,7 @@ export function buildInterior(style, mapCanvas, paint) {
   rvm.position.set(0, roofY - 0.1, Math.max(d.roofFrontZ, d.screenZ + 0.3) + 0.04);
   g.add(rvm);
 
-  g.userData = { wheel, eye: new THREE.Vector3(-0.37, eyeY, eyeZ), screenTex, clusterCanvas, clusterTex, rvm };
+  g.userData = { wheel, eye: new THREE.Vector3(-0.37, eyeY, eyeZ), screenTex, clusterCanvas, clusterTex, rvm, ambient };
   return g;
 }
 

@@ -45,7 +45,13 @@ function paintShader(mat) {
 }
 
 const GLSL_NOISE = /* glsl */ `
-  float uaeHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  // arithmetic hash (no sin): stable on mobile GPUs at large world coordinates, where
+  // sin()-based hashes lose precision and make the noise sparkle as the camera moves
+  float uaeHash(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+  }
   float uaeNoise(vec2 p) {
     vec2 i = floor(p), f = fract(p);
     vec2 u = f * f * (3.0 - 2.0 * f);
@@ -242,6 +248,144 @@ export class WorldMaterials {
     };
   }
 
+  /** Layer of a wall style in the facade texture arrays (same mapping as wallMaterial()). */
+  wallLayer(style) {
+    const L = this.wallLayers;
+    if (!L) return -1;
+    const M = this.wallMats;
+    if (style.startsWith('glass')) return L.get('glass' + (+style.slice(5) % M.glass.length));
+    if (style.startsWith('apt')) return L.get('apt' + (+style.slice(3) % M.apartment.length));
+    if (style.startsWith('photo')) return L.get(style) ?? L.get('office');
+    return L.get(style) ?? L.get('office');
+  }
+
+  /**
+   * Pack every facade (procedural and photographic) into three texture arrays
+   * – colour, normal, and (window-light mask, roughness) – sampled by layer.
+   * Smaller on the GPU than separate 1K–2K maps, and a single material.
+   */
+  async buildWallArray(M) {
+    const hi = this.q.name === 'High';
+    const SC = hi ? 1024 : 512, SN = hi ? 512 : 256;
+    const layers = [];
+    M.glass.forEach((m, i) => layers.push({ style: 'glass' + i, mat: m }));
+    layers.push({ style: 'office', mat: M.office });
+    M.apartment.forEach((m, i) => layers.push({ style: 'apt' + i, mat: m }));
+    layers.push({ style: 'villa', mat: M.villa }, { style: 'shop', mat: M.storefront }, { style: 'ind', mat: M.industrial }, { style: 'mosque', mat: M.mosque });
+    M.photoFacades.forEach((m, i) => layers.push({ style: 'photo' + i, mat: m, photo: true }));
+    const N = layers.length;
+    const load = async (url) => (url ? (await this.loader.loadAsync(url)).image : null);
+    await Promise.all(layers.map(async (l) => {
+      if (!l.photo) return;
+      const [normal, rough] = await Promise.all([load(l.mat.userData.urls.normal).catch(() => null), load(l.mat.userData.urls.rough).catch(() => null)]);
+      l.normal = normal;
+      l.rough = rough;
+    }));
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const read = (src, S, fill) => {
+      canvas.width = canvas.height = S;
+      ctx.setTransform(1, 0, 0, -1, 0, S); // texture arrays are not flipped on upload: flip rows here
+      if (src) ctx.drawImage(src, 0, 0, S, S);
+      else {
+        ctx.fillStyle = fill;
+        ctx.fillRect(0, 0, S, S);
+      }
+      return ctx.getImageData(0, 0, S, S).data;
+    };
+    const color = new Uint8Array(SC * SC * 4 * N);
+    const normal = new Uint8Array(SN * SN * 4 * N);
+    const extra = new Uint8Array(SN * SN * 4 * N); // r: window-light mask, g: roughness
+    const metal = new Float32Array(N);
+    const photo = new Float32Array(N);
+    layers.forEach((l, i) => {
+      const m = l.mat;
+      color.set(read(m.map?.image, SC, '#' + m.color.getHexString()), i * SC * SC * 4);
+      normal.set(read(l.photo ? l.normal : m.normalMap?.image, SN, '#8080ff'), i * SN * SN * 4);
+      const rough = read(l.photo ? l.rough : m.roughnessMap?.image, SN, `rgb(255,${Math.round((m.roughness ?? 1) * 255)},255)`);
+      const emis = m.emissiveMap?.image ? read(m.emissiveMap.image, SN, '#000') : null;
+      const o = i * SN * SN * 4;
+      for (let k = 0; k < SN * SN * 4; k += 4) {
+        extra[o + k] = emis ? emis[k] : 0;
+        extra[o + k + 1] = rough[k + 1];
+        extra[o + k + 3] = 255;
+      }
+      metal[i] = m.metalness ?? 0;
+      photo[i] = l.photo ? 1 : 0;
+    });
+    const arr = (data, S, srgb) => {
+      const t = new THREE.DataArrayTexture(data, S, S, N);
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.minFilter = THREE.LinearMipmapLinearFilter;
+      t.magFilter = THREE.LinearFilter;
+      t.generateMipmaps = true;
+      t.anisotropy = this.maxAniso;
+      t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+      t.needsUpdate = true;
+      t.onUpdate = () => { t.image.data = null; }; // uploaded: free the CPU copy
+      return t;
+    };
+    const tColor = arr(color, SC, true), tNormal = arr(normal, SN, false), tExtra = arr(extra, SN, false);
+    this.wallLayers = new Map(layers.map((l, i) => [l.style, i]));
+    this.wallMats = M;
+    const dummy = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    dummy.needsUpdate = true;
+    const mat = new THREE.MeshStandardMaterial({
+      map: dummy, normalMap: dummy, roughnessMap: dummy, emissiveMap: dummy, emissive: 0xffffff,
+      vertexColors: true, roughness: 1, metalness: 0, envMapIntensity: 1.3,
+    });
+    mat.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, {
+        uColorArr: { value: tColor }, uNormalArr: { value: tNormal }, uExtraArr: { value: tExtra },
+        uMetal: { value: metal }, uPhoto: { value: photo }, uNight: shared.uNight,
+      });
+      addWorldPos(shader);
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float aLayer;\nvarying float vLayer;\nvarying float vLocalH;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLayer = aLayer;\nvLocalH = position.y;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>
+          uniform highp sampler2DArray uColorArr;
+          uniform highp sampler2DArray uNormalArr;
+          uniform highp sampler2DArray uExtraArr;
+          uniform float uMetal[${N}];
+          uniform float uPhoto[${N}];
+          uniform float uNight;
+          varying float vLayer;
+          varying float vLocalH;`)
+        .replace('void main() {', 'void main() {\n  float layerF = floor( vLayer + 0.5 );')
+        // chunks are expanded after this hook: swap the includes for array-sampling versions
+        .replace('#include <map_fragment>', THREE.ShaderChunk.map_fragment
+          .replace('texture2D( map, vMapUv )', 'texture( uColorArr, vec3( vMapUv, layerF ) )'))
+        .replace('#include <roughnessmap_fragment>', THREE.ShaderChunk.roughnessmap_fragment
+          .replace('texture2D( roughnessMap, vRoughnessMapUv )', 'texture( uExtraArr, vec3( vRoughnessMapUv, layerF ) )'))
+        .replace('#include <normal_fragment_maps>', THREE.ShaderChunk.normal_fragment_maps
+          .replace(/texture2D\( normalMap, vNormalMapUv \)/g, 'texture( uNormalArr, vec3( vNormalMapUv, layerF ) )'))
+        .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = uMetal[ int( layerF ) ];')
+        .replace('#include <emissivemap_fragment>', `
+          {
+            bool isPhoto = uPhoto[ int( layerF ) ] > 0.5;
+            vec2 cellUv = vMapUv * ( isPhoto ? vec2( 6.0, 6.0 ) : vec2( 6.0, 3.0 ) );
+            vec2 cellId = floor( cellUv ) + floor( vUaeWorld.xz / 37.0 ) * 13.0;
+            float lit = step( 0.52, uaeHash( cellId ) );
+            float warm = uaeHash( cellId + 7.0 );
+            vec3 lightCol = mix( vec3( 1.0, 0.78, 0.45 ), vec3( 0.75, 0.88, 1.0 ), step( 0.7, warm ) );
+            vec2 f = fract( cellUv );
+            float grid = step( 0.18, f.x ) * step( f.x, 0.82 ) * step( 0.2, f.y ) * step( f.y, 0.75 );
+            float mask = isPhoto ? grid : texture( uExtraArr, vec3( vMapUv, layerF ) ).r;
+            totalEmissiveRadiance = lightCol * mask * lit * uNight * 1.6;
+          }`)
+        .replace('#include <aomap_fragment>', `#include <aomap_fragment>
+          {
+            float groundAO = mix( 0.5, 1.0, smoothstep( 0.0, 3.0, vLocalH ) );
+            reflectedLight.indirectDiffuse *= groundAO;
+            reflectedLight.directDiffuse *= mix( 0.8, 1.0, smoothstep( 0.0, 1.5, vLocalH ) );
+          }`);
+    };
+    mat.customProgramCacheKey = () => `uae-wall-array-${N}`;
+    return mat;
+  }
+
   async init() {
     const q = this.q;
     const hi = q.name === 'High' || q.name === 'Ultra';
@@ -376,9 +520,19 @@ export class WorldMaterials {
           });
           facadeShader(mat, { photo: true, key: f.id });
           mat.userData.facade = { floors: info.floors, bays: info.bays, id: f.id };
+          mat.userData.urls = { normal: files.normal && `${base}/${files.normal}`, rough: files.rough && `${base}/${files.rough}` };
           M.photoFacades.push(mat);
         } catch (e) { /* skip broken asset */ }
       }));
+    }
+    // every facade in texture arrays: all walls of a tile in one draw call (Ultra keeps one material per style)
+    M.wallArray = null;
+    if (this.q.name !== 'Ultra') {
+      try {
+        M.wallArray = await this.buildWallArray(M);
+      } catch (e) {
+        console.warn('[walls] texture arrays unavailable', e);
+      }
     }
 
     // ---------------- props

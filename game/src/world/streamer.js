@@ -173,9 +173,14 @@ export class Streamer {
     group.updateMatrix();
     const shadows = this.q.shadows;
     const detail = [];
-    for (const [key, buf] of Object.entries(data.meshes)) {
+    const meshes = { ...data.meshes };
+    // all facade styles of the tile in one mesh (texture-array material): one draw call
+    const walls = M.wallArray ? mergeWalls(meshes, (style) => this.mats.wallLayer(style)) : null;
+    if (walls) meshes['wall:*'] = walls;
+    for (const [key, buf] of Object.entries(meshes)) {
       let mat;
-      if (key.startsWith('wall:')) mat = this.wallMaterial(key.slice(5));
+      if (key === 'wall:*') mat = M.wallArray;
+      else if (key.startsWith('wall:')) mat = this.wallMaterial(key.slice(5));
       else mat = M[MESH_MATS[key]];
       if (!mat) continue;
       const g = new THREE.BufferGeometry();
@@ -185,6 +190,7 @@ export class Streamer {
       if (buf.c) g.setAttribute('color', new THREE.BufferAttribute(buf.c, 3));
       if (buf.r) g.setAttribute('aRoad', new THREE.BufferAttribute(buf.r, 2));
       if (buf.s) g.setAttribute('aSide', new THREE.BufferAttribute(buf.s, 3));
+      if (buf.layer) g.setAttribute('aLayer', new THREE.BufferAttribute(buf.layer, 1));
       g.setIndex(new THREE.BufferAttribute(buf.i, 1));
       g.computeBoundingSphere();
       const mesh = new THREE.Mesh(g, mat);
@@ -421,6 +427,40 @@ function stopSignList(data) {
       const side = roadWidth(r) / 2 + 1;
       out.push(x - ux * back - uz * side, z - uz * back + ux * side, Math.atan2(-ux, -uz));
     }
+  }
+  return out;
+}
+
+/**
+ * Concatenate a tile's per-style wall buffers into one (removing them from
+ * `meshes`), with each vertex's facade layer in `layer`.
+ */
+function mergeWalls(meshes, layerOf) {
+  const keys = Object.keys(meshes).filter((k) => k.startsWith('wall:') && layerOf(k.slice(5)) >= 0);
+  if (!keys.length) return null;
+  let nv = 0, ni = 0;
+  for (const k of keys) {
+    nv += meshes[k].p.length / 3;
+    ni += meshes[k].i.length;
+  }
+  const out = {
+    p: new Float32Array(nv * 3), n: new Float32Array(nv * 3), uv: new Float32Array(nv * 2), c: new Float32Array(nv * 3),
+    layer: new Float32Array(nv), i: nv > 65535 ? new Uint32Array(ni) : new Uint16Array(ni),
+  };
+  let v = 0, i = 0;
+  for (const k of keys) {
+    const b = meshes[k];
+    const n = b.p.length / 3;
+    out.p.set(b.p, v * 3);
+    out.n.set(b.n, v * 3);
+    out.uv.set(b.uv, v * 2);
+    if (b.c) out.c.set(b.c, v * 3);
+    else out.c.fill(1, v * 3, (v + n) * 3);
+    out.layer.fill(layerOf(k.slice(5)), v, v + n);
+    for (let j = 0; j < b.i.length; j++) out.i[i + j] = b.i[j] + v;
+    v += n;
+    i += b.i.length;
+    delete meshes[k];
   }
   return out;
 }

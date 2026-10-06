@@ -73,7 +73,7 @@ export class Game {
   async init(progress) {
     const q = this.q;
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.15, q.far + 1500);
+    this.camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.25, q.far + 1500); // near 0.25 m: twice the depth precision of 0.15 (less distant z-fighting)
     progress('Lighting the sky…');
     this.env = new Environment(this.scene, this.renderer, q, this.art);
     await this.env.preload(TIMES[this.settings.time]?.hour ?? 12.5, this.settings.season);
@@ -281,6 +281,7 @@ export class Game {
    */
   groundCar() {
     const car = this.car;
+    car.rotation.order = 'YXZ'; // heading first, then pitch and roll in the car's own frame
     let blob = null;
     car.traverse((o) => { if (o.userData.isBlob) blob = o; });
     if (!blob) {
@@ -945,6 +946,7 @@ export class Game {
     this.headlight.angle = this.lightsOn === 2 ? 0.6 : 0.5;
     this.setCockpit(this.cameraMode === 'cockpit');
     if (this.interior.visible) this.interior.userData.wheel.rotation.z = -p.steer * 5;
+    if (this.interior.visible && this.interior.userData.ambient) this.interior.userData.ambient.emissiveIntensity = 0.35 + this.night * 1.8;
     if (this.cockpitOn && this.car.userData.steer) this.car.userData.steer(-p.steer * 5);
   }
 

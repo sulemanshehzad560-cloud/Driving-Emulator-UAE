@@ -25,7 +25,7 @@ export const RESOLUTIONS = {
 };
 
 export const SEASONS = {
-  summer: { name: 'Summer (hazy)', hdri: 'clear', haze: [0.92, 0.84, 0.72], fogDensity: 1.0, sunBoost: 1.1, particles: null, wet: false },
+  summer: { name: 'Summer (hazy)', hdri: 'clear', haze: [0.9, 0.86, 0.78], fogDensity: 1.45, sunBoost: 1.1, particles: null, wet: false },
   winter: { name: 'Winter (clear)', hdri: 'day', haze: [0.78, 0.86, 0.95], fogDensity: 0.55, sunBoost: 1.0, particles: null, wet: false },
   rain: { name: 'Winter rain', hdri: 'overcast', haze: [0.62, 0.65, 0.7], fogDensity: 2.2, sunBoost: 0.4, particles: 'rain', wet: true },
   sandstorm: { name: 'Sandstorm (shamal)', hdri: 'overcast', haze: [0.8, 0.62, 0.4], fogDensity: 5, sunBoost: 0.55, particles: 'dust', wet: false },
@@ -80,7 +80,8 @@ export function patchFog() {
 #endif`;
   THREE.ShaderChunk.fog_vertex = `#ifdef USE_FOG
   vFogDepth = - mvPosition.z;
-  vFogHeight = (inverse(viewMatrix) * mvPosition).y;
+  // world height without a per-vertex matrix inverse (the view matrix is a rigid transform)
+  vFogHeight = dot( viewMatrix[1].xyz, mvPosition.xyz - viewMatrix[3].xyz );
 #endif`;
   THREE.ShaderChunk.fog_pars_fragment = `#ifdef USE_FOG
   uniform vec3 fogColor;
