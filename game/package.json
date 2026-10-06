@@ -10,6 +10,8 @@
     "maps": "node ../tools/fetch-uae-maps.mjs"
   },
   "dependencies": {
+    "@fontsource/saira": "^5.3.0",
+    "@fontsource/saira-condensed": "^5.3.0",
     "three": "^0.186.1"
   },
   "devDependencies": {

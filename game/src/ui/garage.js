@@ -1,9 +1,31 @@
-// 3D showroom behind the menus: the car on a glowing turntable in a warm,
-// colourful studio (sunset backdrop, teal and amber accent lights).
+// 3D showroom behind the menus: the car on a gold-lit turntable in a dark
+// motorsport studio. The car's reflections come from a studio environment of
+// softbox panels (long white highlights along the paint, gold and red rims).
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { buildCar } from '../cars/carFactory.js';
 import { loadBestCarModel, instantiateModelCar } from '../cars/modelCars.js';
+
+/** Studio lighting environment: black room with softboxes and coloured rim strips. */
+function studioEnvironment(renderer) {
+  const sc = new THREE.Scene();
+  sc.background = new THREE.Color(0x020203);
+  const panel = (w, h, pos, intensity, color = 0xffffff) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(intensity), side: THREE.DoubleSide }));
+    m.position.set(...pos);
+    m.lookAt(0, 0, 0);
+    sc.add(m);
+  };
+  for (const z of [-3, 0, 3]) panel(16, 1.1, [0, 9, z], 7); // overhead softbox strips
+  panel(1.2, 7, [-10, 3.5, 0], 3.2); // side strip boxes
+  panel(1.2, 7, [10, 3.5, 0], 3.2);
+  panel(12, 0.7, [0, 1.6, -11], 4.5, 0xffb000); // gold rim behind
+  panel(12, 0.7, [0, 1.6, 11], 3.2, 0xff2d46); // red rim in front
+  panel(30, 30, [0, -6, 0], 0.08); // faint floor bounce
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const tex = pmrem.fromScene(sc, 0.02).texture;
+  pmrem.dispose();
+  return tex;
+}
 
 function backdropTexture() {
   const c = document.createElement('canvas');
@@ -11,11 +33,10 @@ function backdropTexture() {
   c.height = 512;
   const ctx = c.getContext('2d');
   const g = ctx.createLinearGradient(0, 0, 0, 512);
-  g.addColorStop(0, '#1a1340');
-  g.addColorStop(0.45, '#4a1f5c');
-  g.addColorStop(0.7, '#b8456b');
-  g.addColorStop(0.86, '#f08a4b');
-  g.addColorStop(1, '#2a1a2a');
+  g.addColorStop(0, '#0b0d12');
+  g.addColorStop(0.55, '#07080b');
+  g.addColorStop(0.8, '#120d08');
+  g.addColorStop(1, '#050608');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, 16, 512);
   const t = new THREE.CanvasTexture(c);
@@ -28,63 +49,77 @@ export class Garage {
     this.renderer = renderer;
     this.scene = new THREE.Scene();
     this.scene.background = backdropTexture();
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.85;
+    this.scene.environment = studioEnvironment(renderer);
+    this.scene.environmentIntensity = 1;
+    this.scene.fog = new THREE.Fog(0x06070a, 16, 42);
     this.camera = new THREE.PerspectiveCamera(36, innerWidth / innerHeight, 0.1, 300);
     this.angle = 0.7;
     this.mode = 'home';
     this.previewId = null;
 
-    const floor = new THREE.Mesh(new THREE.CircleGeometry(60, 96), new THREE.MeshStandardMaterial({ color: 0x1a1022, metalness: 0.4, roughness: 0.28 }));
+    // glossy black studio floor
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(60, 96), new THREE.MeshStandardMaterial({ color: 0x0b0c10, metalness: 0.35, roughness: 0.32 }));
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     this.scene.add(floor);
-    const ring = new THREE.Mesh(new THREE.RingGeometry(3.7, 3.9, 128), new THREE.MeshBasicMaterial({ color: 0xffb347, toneMapped: false }));
+    // turntable with a gold LED ring and a thin white outer ring
+    this.turntable = new THREE.Mesh(new THREE.CylinderGeometry(3.65, 3.72, 0.1, 96), new THREE.MeshStandardMaterial({ color: 0x15171c, metalness: 0.85, roughness: 0.26 }));
+    this.turntable.position.y = 0.05;
+    this.turntable.receiveShadow = true;
+    this.scene.add(this.turntable);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(3.74, 3.86, 128), new THREE.MeshBasicMaterial({ color: 0xffb000, toneMapped: false }));
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.012;
     this.scene.add(ring);
     this.ring = ring;
-    const ring2 = new THREE.Mesh(new THREE.RingGeometry(4.3, 4.36, 128), new THREE.MeshBasicMaterial({ color: 0x40e0d0, toneMapped: false, transparent: true, opacity: 0.7 }));
+    const ring2 = new THREE.Mesh(new THREE.RingGeometry(4.5, 4.53, 128), new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false, transparent: true, opacity: 0.35 }));
     ring2.rotation.x = -Math.PI / 2;
     ring2.position.y = 0.012;
     this.scene.add(ring2);
-    this.turntable = new THREE.Mesh(new THREE.CylinderGeometry(3.65, 3.7, 0.1, 96), new THREE.MeshStandardMaterial({ color: 0x241a2e, metalness: 0.8, roughness: 0.22 }));
-    this.turntable.position.y = 0.05;
-    this.turntable.receiveShadow = true;
-    this.scene.add(this.turntable);
-
-    // city skyline silhouette around the studio
-    const sky = new THREE.Group();
-    const mat = new THREE.MeshBasicMaterial({ color: 0x241634, fog: false });
-    const lit = new THREE.MeshBasicMaterial({ color: 0xffb870, fog: false });
-    for (let i = 0; i < 64; i++) {
-      const a = (i / 64) * Math.PI * 2;
-      const h = 6 + ((i * 37) % 17) + (i % 9 === 0 ? 24 : 0);
-      const b = new THREE.Mesh(new THREE.BoxGeometry(3 + (i % 3), h, 3), mat);
-      b.position.set(Math.cos(a) * 70, h / 2, Math.sin(a) * 70);
-      b.lookAt(0, h / 2, 0);
-      sky.add(b);
-      if (i % 4 === 0) {
-        const w = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.1), lit);
-        w.position.set(b.position.x * 0.98, h * 0.6, b.position.z * 0.98);
-        sky.add(w);
-      }
+    // floor guide lines radiating from the turntable
+    const lines = new THREE.Group();
+    const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.07 });
+    for (let i = 0; i < 24; i++) {
+      const l = new THREE.Mesh(new THREE.PlaneGeometry(0.04, 14), lineMat);
+      const a = (i / 24) * Math.PI * 2;
+      l.rotation.x = -Math.PI / 2;
+      l.rotation.z = a;
+      l.position.set(Math.sin(a) * 11.5, 0.008, Math.cos(a) * 11.5);
+      lines.add(l);
     }
-    this.scene.add(sky);
+    this.scene.add(lines);
 
-    const key = new THREE.SpotLight(0xfff1e0, 500, 40, 0.6, 0.5, 1.5);
-    key.position.set(5, 10, 6);
+    // curved back wall with vertical LED strips
+    const wall = new THREE.Mesh(new THREE.CylinderGeometry(24, 24, 14, 64, 1, true), new THREE.MeshStandardMaterial({ color: 0x0d0f13, roughness: 0.92, side: THREE.BackSide }));
+    wall.position.y = 7;
+    this.scene.add(wall);
+    const ledGold = new THREE.MeshBasicMaterial({ color: 0xffb000, toneMapped: false, fog: false });
+    const ledWhite = new THREE.MeshBasicMaterial({ color: 0xdfe6f0, toneMapped: false, fog: false });
+    for (let i = 0; i < 36; i++) {
+      const a = (i / 36) * Math.PI * 2;
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(0.12, i % 3 === 0 ? 7 : 4.5, 0.12), i % 3 === 0 ? ledGold : ledWhite);
+      strip.position.set(Math.cos(a) * 23.6, i % 3 === 0 ? 4.2 : 3.4, Math.sin(a) * 23.6);
+      this.scene.add(strip);
+    }
+    // overhead light bars (seen in the floor and the paint)
+    for (const z of [-3, 0, 3]) {
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(12, 0.08, 0.5), new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false }));
+      bar.position.set(0, 9, z);
+      this.scene.add(bar);
+    }
+
+    const key = new THREE.SpotLight(0xffffff, 520, 40, 0.62, 0.55, 1.5);
+    key.position.set(4, 11, 5);
     key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
     this.scene.add(key);
-    const teal = new THREE.SpotLight(0x40e0d0, 300, 40, 0.8, 0.6, 1.5);
-    teal.position.set(-8, 5, -4);
-    this.scene.add(teal);
-    const amber = new THREE.SpotLight(0xff8c42, 260, 40, 0.8, 0.6, 1.5);
-    amber.position.set(7, 4, -7);
-    this.scene.add(amber);
-    this.scene.add(new THREE.HemisphereLight(0xb9a0ff, 0x221133, 0.5));
+    const gold = new THREE.SpotLight(0xffb000, 300, 40, 0.8, 0.6, 1.5);
+    gold.position.set(-8, 4, -6);
+    this.scene.add(gold);
+    const red = new THREE.SpotLight(0xff2d46, 110, 40, 0.8, 0.6, 1.5);
+    red.position.set(8, 3.5, -7);
+    this.scene.add(red);
+    this.scene.add(new THREE.HemisphereLight(0xc8d2e0, 0x0a0a0c, 0.35));
     this.car = null;
   }
 
@@ -125,7 +160,7 @@ export class Garage {
   update(dt) {
     this.turntable.rotation.y += dt * (this.mode === 'showroom' ? 0.18 : 0.25);
     this.angle += dt * 0.02;
-    this.ring.material.color.setHSL(0.08 + Math.sin(performance.now() / 2000) * 0.02, 1, 0.6);
+    this.ring.material.color.setHSL(0.11, 1, 0.45 + Math.sin(performance.now() / 700) * 0.06); // breathing gold LED
     const portrait = innerWidth < innerHeight;
     const showroom = this.mode === 'showroom';
     const r = portrait ? 14 : showroom ? 10 : 11.5;
@@ -137,7 +172,7 @@ export class Garage {
 
   render() {
     if (this.mode === 'hidden') {
-      this.renderer.setClearColor(0x0b1020);
+      this.renderer.setClearColor(0x06070a);
       this.renderer.clear();
       return;
     }

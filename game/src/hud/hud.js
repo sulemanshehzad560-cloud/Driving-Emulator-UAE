@@ -544,81 +544,93 @@ export class Hud {
     ctx.restore();
   }
 
+  /**
+   * Racing speedometer: segmented arc that lights up gold -> red, a thin
+   * rpm arc, big italic digital speed and the gear. Redrawn only when what
+   * it shows changes (saves a canvas repaint and texture upload per frame).
+   */
   drawSpeedo(v, limit) {
+    const kmh = Math.round(v.kmh);
+    const rpmN = Math.min(1, v.rpm / 7500);
+    const gear = v.gear === -1 ? 'R' : v.kmh < 1 ? 'N' : String(v.gear);
+    const key = `${kmh}|${Math.round(rpmN * 40)}|${gear}|${limit}`;
+    if (key === this.speedoKey) return;
+    this.speedoKey = key;
     const ctx = this.speedo;
-    const W = 320, cx = 160, cy = 160, R = 140;
+    const W = 320, cx = 160, cy = 168, R = 138;
     const max = Math.max(260, Math.ceil(v.spec.topSpeed / 20) * 20);
     ctx.clearRect(0, 0, W, W);
-    const a0 = Math.PI * 0.78, a1 = Math.PI * 2.22;
-    const ang = (k) => a0 + (a1 - a0) * Math.min(1, k / max);
-    // backing disc
-    const g = ctx.createRadialGradient(cx, cy, 30, cx, cy, R + 10);
-    g.addColorStop(0, 'rgba(14,18,26,0.92)');
-    g.addColorStop(1, 'rgba(6,8,12,0.75)');
+    const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
+    const over = v.kmh > limit + 5;
+    // soft dark backing so it reads over a bright sky or road
+    const g = ctx.createRadialGradient(cx, cy, 20, cx, cy, R + 16);
+    g.addColorStop(0, 'rgba(6,7,10,0.78)');
+    g.addColorStop(0.75, 'rgba(6,7,10,0.55)');
+    g.addColorStop(1, 'rgba(6,7,10,0)');
     ctx.fillStyle = g;
     ctx.beginPath();
-    ctx.arc(cx, cy, R + 10, 0, Math.PI * 2);
+    ctx.arc(cx, cy, R + 16, 0, Math.PI * 2);
     ctx.fill();
-    // track
-    ctx.lineCap = 'round';
-    ctx.lineWidth = 14;
+    // segmented speed arc
+    const N = 36, gap = 0.022;
+    const lit = Math.round(Math.min(1, v.kmh / max) * N);
+    const limitSeg = Math.round(Math.min(1, limit / max) * N);
+    for (let i = 0; i < N; i++) {
+      const s0 = a0 + ((a1 - a0) * i) / N + gap, s1 = a0 + ((a1 - a0) * (i + 1)) / N - gap;
+      let col = 'rgba(255,255,255,0.1)';
+      if (i < lit) {
+        const t = i / N;
+        col = over && i >= limitSeg ? '#ff2d46' : t < 0.55 ? '#ffb800' : t < 0.8 ? '#ff7a1a' : '#ff2d46';
+      }
+      ctx.strokeStyle = col;
+      ctx.lineWidth = i < lit ? 16 : 12;
+      ctx.beginPath();
+      ctx.arc(cx, cy, R - 10, s0, s1);
+      ctx.stroke();
+    }
+    // speed-limit tick
+    const la = a0 + (a1 - a0) * Math.min(1, limit / max);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(la) * (R + 4), cy + Math.sin(la) * (R + 4));
+    ctx.lineTo(cx + Math.cos(la) * (R - 26), cy + Math.sin(la) * (R - 26));
+    ctx.stroke();
+    // rpm arc
+    ctx.lineCap = 'butt';
+    ctx.lineWidth = 5;
     ctx.strokeStyle = 'rgba(255,255,255,0.08)';
     ctx.beginPath();
-    ctx.arc(cx, cy, R - 12, a0, a1);
+    ctx.arc(cx, cy, R - 34, a0, a1);
     ctx.stroke();
-    // speed arc: cyan -> green -> amber -> red past the limit
-    const speedA = ang(v.kmh);
-    let grad = '#34c759';
-    if (ctx.createConicGradient) {
-      grad = ctx.createConicGradient(a0, cx, cy);
-      grad.addColorStop(0, '#00d4ff');
-      grad.addColorStop(0.35, '#34c759');
-      grad.addColorStop(0.6, '#ffd60a');
-      grad.addColorStop(0.72, '#ff453a');
-    }
-    ctx.strokeStyle = v.kmh > limit + 5 ? '#ff453a' : grad;
+    ctx.strokeStyle = rpmN > 0.86 ? '#ff2d46' : '#18d2ff';
     ctx.beginPath();
-    ctx.arc(cx, cy, R - 12, a0, Math.max(a0 + 0.001, speedA));
-    ctx.stroke();
-    // rpm inner arc
-    const rpmN = Math.min(1, v.rpm / 7500);
-    ctx.lineWidth = 5;
-    ctx.strokeStyle = rpmN > 0.86 ? '#ff453a' : 'rgba(255,214,10,0.85)';
-    ctx.beginPath();
-    ctx.arc(cx, cy, R - 32, a0, a0 + (a1 - a0) * rpmN);
-    ctx.stroke();
-    // ticks
-    ctx.fillStyle = '#c9d2dd';
-    ctx.font = '600 15px system-ui, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    for (let k = 0; k <= max; k += 20) {
-      const a = ang(k);
-      ctx.strokeStyle = k > limit ? 'rgba(255,99,90,0.9)' : 'rgba(220,226,234,0.8)';
-      ctx.lineWidth = k % 40 === 0 ? 3 : 1.5;
-      ctx.beginPath();
-      ctx.moveTo(cx + Math.cos(a) * (R + 2), cy + Math.sin(a) * (R + 2));
-      ctx.lineTo(cx + Math.cos(a) * (R - 4), cy + Math.sin(a) * (R - 4));
-      ctx.stroke();
-      if (k % 40 === 0) ctx.fillText(k, cx + Math.cos(a) * (R - 52), cy + Math.sin(a) * (R - 52));
-    }
-    // limit marker
-    const la = ang(limit);
-    ctx.strokeStyle = '#ff375f';
-    ctx.lineWidth = 6;
-    ctx.beginPath();
-    ctx.arc(cx, cy, R - 12, la - 0.025, la + 0.025);
+    ctx.arc(cx, cy, R - 34, a0, a0 + (a1 - a0) * rpmN);
     ctx.stroke();
     // digits
-    ctx.fillStyle = v.kmh > limit + 5 ? '#ff6961' : '#ffffff';
-    ctx.font = '800 64px system-ui, sans-serif';
-    ctx.fillText(Math.round(v.kmh), cx, cy - 4);
-    ctx.fillStyle = '#8a95a3';
-    ctx.font = '600 14px system-ui, sans-serif';
-    ctx.fillText('km/h', cx, cy + 34);
-    ctx.fillStyle = '#ffd60a';
-    ctx.font = '800 24px system-ui, sans-serif';
-    ctx.fillText(v.gear === -1 ? 'R' : v.kmh < 1 ? 'N' : `D${v.gear}`, cx, cy + 74);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = over ? '#ff5468' : '#ffffff';
+    ctx.font = 'italic 800 92px "Saira Condensed", "Arial Narrow", sans-serif';
+    ctx.fillText(kmh, cx - 4, cy - 6);
+    ctx.fillStyle = '#8e98a8';
+    ctx.font = '700 26px "Saira Condensed", sans-serif';
+    ctx.fillText('KM/H', cx, cy + 44);
+    // gear badge
+    ctx.fillStyle = gear === 'R' ? '#ff2d46' : '#ffb800';
+    ctx.beginPath();
+    const gx = cx, gy = cy + 92, gw = 28;
+    ctx.moveTo(gx - gw * 0.5, gy - 18);
+    ctx.lineTo(gx + gw * 0.5, gy - 18);
+    ctx.lineTo(gx + gw, gy);
+    ctx.lineTo(gx + gw * 0.5, gy + 18);
+    ctx.lineTo(gx - gw * 0.5, gy + 18);
+    ctx.lineTo(gx - gw, gy);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#1b1300';
+    ctx.font = 'italic 800 32px "Saira Condensed", sans-serif';
+    ctx.fillText(gear, gx, gy + 1);
   }
 
   update(st) {

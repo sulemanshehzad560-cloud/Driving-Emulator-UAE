@@ -652,15 +652,19 @@ export class Game {
     const seg = (key, obj) => `<div class="seg wrap" data-seg="${key}">${Object.entries(obj).map(([k, v]) => `<button data-v="${k}" class="${s[key] === k ? 'on' : ''}">${v.name}</button>`).join('')}</div>`;
     el.innerHTML = `
       <div class="pause-card">
-        <div class="pause-head"><h2>Paused</h2><span class="muted">${this.sessionSummary()}</span></div>
-        <label>Time of day</label>${seg('time', TIMES)}
-        <label>Season & weather</label>${seg('season', SEASONS)}
-        <label>Steering</label>${seg('controls', { arrows: { name: 'Arrows' }, wheel: { name: 'Steering wheel' }, tilt: { name: 'Tilt (gyroscope)' } })}
-        <label class="row"><input type="checkbox" data-s="dynamicTime" ${s.dynamicTime ? 'checked' : ''}> Day/night cycle (1 min = 1 hour)</label>
-        <div class="pause-btns">
-          <button data-p="resume" class="btn primary">${icon('play')} Resume</button>
-          <button data-p="respawn" class="btn">Reset car to road</button>
-          <button data-p="quit" class="btn ghost">Quit to garage</button>
+        <div class="pause-side">
+          <div class="pause-head"><h2>Paused</h2><span class="muted">${this.sessionSummary()}</span></div>
+          <div class="pause-btns">
+            <button data-p="resume" class="btn primary big">${icon('play')} Resume</button>
+            <button data-p="respawn" class="btn">Reset car to road</button>
+            <button data-p="quit" class="btn ghost">Quit to garage</button>
+          </div>
+        </div>
+        <div class="pause-opts">
+          <label>Time of day</label>${seg('time', TIMES)}
+          <label>Season & weather</label>${seg('season', SEASONS)}
+          <label>Steering</label>${seg('controls', { arrows: { name: 'Arrows' }, wheel: { name: 'Steering wheel' }, tilt: { name: 'Tilt (gyroscope)' } })}
+          <label class="row"><input type="checkbox" data-s="dynamicTime" ${s.dynamicTime ? 'checked' : ''}> Day/night cycle (1 min = 1 hour)</label>
         </div>
       </div>`;
     el.onclick = (e) => {

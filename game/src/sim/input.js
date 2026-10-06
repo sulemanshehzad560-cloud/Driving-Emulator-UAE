@@ -1,5 +1,6 @@
 // Driving controls: on-screen arrows, a touch steering wheel, gyroscope tilt
 // steering and keyboard (for desktop testing). Pedals are shared.
+import { icon } from '../ui/icons.js';
 
 export class Input {
   constructor(root, mode = 'arrows', sensitivity = 1) {
@@ -50,8 +51,8 @@ export class Input {
     r.innerHTML = `
       <div class="ctl-left">
         <div class="steer-arrows">
-          <button class="ctl-btn arrow" data-k="left">◀</button>
-          <button class="ctl-btn arrow" data-k="right">▶</button>
+          <button class="ctl-btn arrow" data-k="left" aria-label="Steer left">${icon('left')}</button>
+          <button class="ctl-btn arrow" data-k="right" aria-label="Steer right">${icon('right')}</button>
         </div>
         <div class="steer-wheel"><div class="wheel-rim"><div class="wheel-spoke"></div><div class="wheel-hub">✦</div></div></div>
         <div class="steer-tilt"><div class="tilt-ind"><div class="tilt-bar"></div></div><button class="ctl-mini" data-a="calibrate">Re-centre</button></div>

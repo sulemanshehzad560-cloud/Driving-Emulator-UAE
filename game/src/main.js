@@ -159,6 +159,7 @@ function splash() {
         <div class="logo-mark">UAE<span>DRIVE</span></div>
         <div class="logo-ar">درايف الإمارات</div>
         <div class="logo-sub">ROADS OF THE SEVEN EMIRATES</div>
+        <div class="logo-bar"></div>
       </div>
       <div class="tap"><span>Tap to start</span></div>
       <div class="splash-foot">Map data © OpenStreetMap contributors</div>
@@ -206,7 +207,7 @@ function login() {
     <div class="modal-screen sunset-bg">
       <div class="card login">
         <div class="logo-mark small">UAE<span>DRIVE</span></div>
-        <p class="login-sub">Save your cars, money and progress</p>
+        <p class="login-sub">Sign in to save your cars, cash and career</p>
         <button class="btn social google" data-p="google" ${!native || !p.google ? 'data-off' : ''}>${icon('google')} Continue with Google Play Games</button>
         <button class="btn social facebook" data-p="facebook" ${!native || !p.facebook ? 'data-off' : ''}>${icon('facebook')} Continue with Facebook</button>
         <button class="btn social instagram" data-p="instagram">${icon('instagram')} Instagram</button>
@@ -247,6 +248,7 @@ function login() {
 // ---------- home shell ----------
 let tab = 'home';
 let driveMode = 'free';
+let settingsCat = 'g1';
 
 function ensureGarage() {
   if (!garage) garage = window.__garage = new Garage(renderer);
@@ -283,7 +285,7 @@ function home(t = tab) {
       </header>
       <main class="content">${renderTab(tab)}</main>
       <nav class="bottom-nav">
-        ${[['home', 'drive', 'Drive'], ['map', 'map', 'Map'], ['garage', 'garage', 'Garage'], ['profile', 'profile', 'Profile'], ['settings', 'settings', 'Settings']]
+        ${[['home', 'drive', 'Drive'], ['map', 'map', 'World map'], ['garage', 'garage', 'Garage'], ['profile', 'trophy', 'Career'], ['settings', 'settings', 'Settings']]
           .map(([k, ic, label]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${icon(ic)}<span>${label}</span></button>`).join('')}
       </nav>
       <div id="fps" class="${profile.settings.showFps ? '' : 'hidden'}"></div>
@@ -299,6 +301,14 @@ function home(t = tab) {
   bindTab(tab);
 }
 
+/** Big two-tone mode heading: last word in the accent gradient. */
+function modeTitle(k) {
+  const m = MODES.find((x) => x[0] === k) || MODES[0];
+  const words = m[1].split(' ');
+  const lastWord = words.pop();
+  return `${words.join(' ')} <em>${lastWord}</em>`;
+}
+
 const MODES = [
   ['free', 'Free roam', 'Drive anywhere in the UAE with GPS, radio and traffic.', 'map', 'm-free'],
   ['taxi', 'Chauffeur run', 'Pick up a VIP and drop them off. Fast and clean pays best.', 'flag', 'm-taxi'],
@@ -311,7 +321,7 @@ function renderTab(t) {
     const last = CITIES.find((c) => c.id === profile.lastCity) || CITIES[0];
     return `
       <section class="home-left">
-        <div class="hello"><small>Marhaba, ${escapeHtml(profile.name.split(' ')[0])}!</small><h2>Where are we driving today?</h2></div>
+        <div class="hello"><small>Marhaba, ${escapeHtml(profile.name.split(' ')[0])}</small><h2 class="mode-title">${modeTitle(driveMode)}</h2></div>
         <div class="modes">${MODES.map(([k, n, d, ic, cls]) => `<button class="mode ${cls} ${driveMode === k ? 'on' : ''}" data-mode="${k}"><span class="mode-ic">${icon(ic)}</span><b>${n}</b><small>${d}</small></button>`).join('')}</div>
         <button class="drive-cta" data-drive="${last.id}">${icon('play')}<span><b>DRIVE</b><small>${escapeHtml(last.name)} · ${escapeHtml(last.emirate)}</small></span></button>
         <button class="link-btn" data-tab="map">${icon('pin')} Choose another place on the UAE map</button>
@@ -357,6 +367,12 @@ function renderTab(t) {
     const got = ACHIEVEMENTS.filter((a) => a.test(profile));
     return `
       <section class="profile-tab">
+        <div class="career-banner">
+          <div class="avatar big" style="--p:${Math.round(level(profile).progress * 100)}">${profile.avatar ? `<img src="${profile.avatar}" alt="">` : `<span>${escapeHtml(profile.name[0])}</span>`}</div>
+          <div class="cb-txt"><small>Driver career</small><h2>${escapeHtml(profile.name)}</h2>
+            <div class="xp"><b>LV ${level(profile).lvl}</b><div class="xp-bar"><div style="width:${Math.round(level(profile).progress * 100)}%"></div></div></div></div>
+          <div class="cb-cash">${icon('coins')}<b>${fmt(profile.balance)}</b><small>AED</small></div>
+        </div>
         <div class="stat-cards">
           ${[['drive', `${s.km.toFixed(1)} km`, 'Distance driven', 'c1'], ['signal', `${s.topSpeed} km/h`, 'Top speed', 'c2'], ['flag', s.missions, 'Missions', 'c3'], ['trophy', s.tests, 'Tests passed', 'c4'], ['warning', `${s.finesCount}`, `Fines · AED ${fmt(s.fines)}`, 'c5'], ['info', `${profile.blackPoints}/24`, 'Black points', 'c6']]
             .map(([ic, v, l, c]) => `<div class="stat-card ${c}">${icon(ic)}<b>${v}</b><small>${l}</small></div>`).join('')}
@@ -372,29 +388,33 @@ function renderTab(t) {
   }
   const s = profile.settings;
   const seg = (key, options) => `<div class="seg wrap" data-set="${key}">${options.map(([v, n]) => `<button data-v="${v}" class="${String(s[key]) === String(v) ? 'on' : ''}">${n}</button>`).join('')}</div>`;
+  const cats = [['g1', 'sun', 'Graphics'], ['g2', 'drive', 'Controls'], ['g3', 'moon', 'World'], ['g4', 'radio', 'Sound'], ['credits', 'info', 'About']];
+  const on = (k) => (settingsCat === k ? 'on' : '');
   return `
     <section class="settings-tab">
-      <div class="set-group g1"><h4>${icon('sun')} Graphics</h4>
+      <div class="set-cats">${cats.map(([k, ic, n]) => `<button data-cat="${k}" class="${on(k)}">${icon(ic)}<span>${n}</span></button>`).join('')}</div>
+      <div class="set-panes">
+      <div class="set-group g1 ${on('g1')}"><h4>${icon('sun')} Graphics</h4>
         <label>Quality</label>${seg('quality', [['auto', `Auto (${QUALITY[detectedQuality].name})`], ...Object.entries(QUALITY).map(([k, v]) => [k, v.name])])}
         <label>Resolution</label>${seg('resolution', Object.entries(RESOLUTIONS).map(([k, v]) => [k, v.name]))}
         <label>Mirrors</label>${seg('mirrors', [['all', 'Rear + side'], ['rear', 'Rear only'], ['off', 'Off']])}
       </div>
-      <div class="set-group g2"><h4>${icon('drive')} Controls</h4>
+      <div class="set-group g2 ${on('g2')}"><h4>${icon('drive')} Controls</h4>
         <label>Steering</label>${seg('controls', [['arrows', 'Arrows'], ['wheel', 'Steering wheel'], ['tilt', 'Tilt (gyroscope)']])}
         <label>Sensitivity <output>${s.sensitivity}</output></label><input type="range" min="0.5" max="1.8" step="0.1" data-range="sensitivity" value="${s.sensitivity}">
         <label>Default camera</label>${seg('camera', [['chase', 'Chase'], ['far', 'Far'], ['cockpit', 'Cockpit'], ['hood', 'Bonnet'], ['cinematic', 'Cinematic']])}
       </div>
-      <div class="set-group g3"><h4>${icon('moon')} World</h4>
+      <div class="set-group g3 ${on('g3')}"><h4>${icon('moon')} World</h4>
         <label>Time of day</label>${seg('time', Object.entries(TIMES).map(([k, v]) => [k, v.name]))}
         <label>Season & weather</label>${seg('season', Object.entries(SEASONS).map(([k, v]) => [k, v.name]))}
         <label>Traffic</label>${seg('trafficDensity', [[0.5, 'Light'], [1, 'Normal'], [1.5, 'Rush hour']])}
       </div>
-      <div class="set-group g4"><h4>${icon('radio')} Sound & more</h4>
+      <div class="set-group g4 ${on('g4')}"><h4>${icon('radio')} Sound & more</h4>
         <label>Master volume</label><input type="range" min="0" max="1" step="0.05" data-range="volume" value="${s.volume}">
         <label class="row"><input type="checkbox" data-check="dynamicTime" ${s.dynamicTime ? 'checked' : ''}> Day/night cycle while driving</label>
         <label class="row"><input type="checkbox" data-check="showFps" ${s.showFps ? 'checked' : ''}> Show FPS counter</label>
       </div>
-      <div class="set-group credits"><h4>${icon('info')} About & credits</h4>
+      <div class="set-group credits ${on('credits')}"><h4>${icon('info')} About & credits</h4>
         <p>Map data © <b>OpenStreetMap</b> contributors, ODbL 1.0.</p>
         <p>Skies and surface textures: <b>Poly Haven</b> and <b>ambientCG</b> (CC0).</p>
         <p>Aurora Vision GT model: “Car Concept” by Eric Chadwick / Darmstadt Graphics Group, CC BY 4.0 — logos removed, materials adapted for mobile.</p>
@@ -402,7 +422,8 @@ function renderTab(t) {
         <p>Traffic cars: “Cars Bundle” by <b>Quaternius</b> (CC0).</p>
         <p>All other vehicles are original designs, not affiliated with any manufacturer.</p>
       </div>
-      <p class="note">Tip: 1080p and Ultra look best on flagship phones. Auto resolution adapts to keep driving smooth.</p>
+      <p class="note">Tip: Auto quality picks the best preset for your phone and keeps driving smooth. Ultra is for flagship phones.</p>
+      </div>
     </section>`;
 }
 
@@ -421,6 +442,8 @@ function bindTab(t) {
     click('[data-mode]', (el) => {
       driveMode = el.dataset.mode;
       screens.querySelectorAll('[data-mode]').forEach((b) => b.classList.toggle('on', b === el));
+      const t = $('.mode-title');
+      if (t) t.innerHTML = modeTitle(driveMode);
     });
     click('[data-drive]', (el) => startCity(el.dataset.drive));
   } else if (t === 'map') {
@@ -497,6 +520,11 @@ function bindTab(t) {
       home('profile');
     });
   } else if (t === 'settings') {
+    click('[data-cat]', (el) => {
+      settingsCat = el.dataset.cat;
+      screens.querySelectorAll('[data-cat]').forEach((b) => b.classList.toggle('on', b === el));
+      screens.querySelectorAll('.set-group').forEach((g) => g.classList.toggle('on', g.classList.contains(settingsCat)));
+    });
     click('[data-set] [data-v]', (el) => {
       const k = el.parentElement.dataset.set;
       let v = el.dataset.v;
@@ -564,8 +592,8 @@ async function startDrive(start) {
   h(`
     <div class="loading sunset-bg">
       <div class="logo-mark small">UAE<span>DRIVE</span></div>
-      <div class="load-dest">${icon('pin')} ${escapeHtml(start.name || 'UAE')}</div>
       <div class="load-road"><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="load-dest"><small>${icon('pin')} Driving to</small><b>${escapeHtml(start.name || 'UAE')}</b></div>
       <div class="load-bar"><div></div></div>
       <div class="load-text">Preparing…</div>
       <div class="tip">${icon('info')} ${tips[Math.floor(Math.random() * tips.length)]}</div>
